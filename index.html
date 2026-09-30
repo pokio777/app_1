@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 :root{
   --paper:#EFE6D8;
@@ -234,6 +235,22 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
 .heart-icon{transition:fill .15s ease, stroke .15s ease;outline:none;}
 .heart-icon.filled{fill:var(--stamp);stroke:var(--stamp);}
 .heart-icon:focus-visible{outline:2px solid var(--stamp);outline-offset:2px;border-radius:4px;}
+
+/* ログイン画面 */
+.tabs.is-hidden{display:none;}
+.auth-switch{display:flex;gap:4px;background:var(--card-deep);border-radius:10px;padding:4px;margin:14px 0 14px;}
+.auth-switch button{flex:1;border:none;background:transparent;padding:8px;border-radius:7px;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;}
+.auth-switch button.active{background:var(--paper);color:var(--ink);box-shadow:0 1px 0 rgba(0,0,0,.05);}
+.auth-field{margin-bottom:10px;}
+.auth-field label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:4px;}
+.auth-divider{display:flex;align-items:center;gap:10px;margin:16px 0;font-size:11px;color:var(--ink-soft);}
+.auth-divider::before,.auth-divider::after{content:"";flex:1;border-top:1px dashed var(--line);}
+.btn-google{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;}
+.btn-google:hover{background:var(--card);}
+.btn-google i{font-size:18px;color:#DB4437;}
+.auth-msg{min-height:18px;margin:10px 0 0;font-size:12px;line-height:1.5;color:var(--stamp-deep);}
+.auth-msg.ok{color:var(--green);}
+.btn-primary:disabled,.btn-google:disabled{opacity:.5;cursor:not-allowed;}
 </style>
 </head>
 <body>
@@ -243,8 +260,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
     <p class="catch">一人暮らし大学生の「今日、何食う?」を1枚で。</p>
   </div>
 
-  <div class="tabs">
-    <button class="tab active" data-t="onboard">初回設定</button>
+  <div class="tabs is-hidden" id="main-tabs">
     <button class="tab" data-t="home">ホーム</button>
     <button class="tab" data-t="plan">定期プラン</button>
     <button class="tab" data-t="detail">レシピ</button>
@@ -252,6 +268,26 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
   </div>
 
   <div class="phone">
+
+    <!-- AUTH(ログイン・新規登録) -->
+    <section class="screen" id="auth">
+      <button class="ob-back" id="auth-back" type="button">&larr; マイページへ戻る</button>
+      <p class="eyebrow">ログイン</p>
+      <h1 class="title">ログインして使う</h1>
+      <p class="sub">定期プランや履歴は、アカウントごとに保存されます。</p>
+      <div class="auth-switch" role="tablist">
+        <button type="button" class="active" id="auth-mode-login">ログイン</button>
+        <button type="button" id="auth-mode-signup">新規登録</button>
+      </div>
+      <div class="auth-field"><label for="auth-email">メールアドレス</label>
+        <input class="ob-input" id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" style="margin-bottom:0;"></div>
+      <div class="auth-field"><label for="auth-password">パスワード(6文字以上)</label>
+        <input class="ob-input" id="auth-password" type="password" autocomplete="current-password" placeholder="パスワード" style="margin-bottom:0;"></div>
+      <button class="btn-primary" id="auth-submit" style="margin-top:6px;">ログイン</button>
+      <div class="auth-divider">または</div>
+      <button class="btn-google" id="auth-google"><i class="ti ti-brand-google"></i>Googleでログイン</button>
+      <p class="auth-msg" id="auth-msg" role="status"></p>
+    </section>
 
     <!-- ONBOARDING -->
     <section class="screen active" id="onboard">
@@ -440,6 +476,9 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
     <section class="screen" id="mypage">
       <p class="eyebrow">マイページ</p>
       <h1 class="title" id="mypage-heading" style="margin-bottom:14px;">利用状況</h1>
+
+      <div class="sectionhead" style="margin-top:0;">アカウント</div>
+      <div class="receipt" id="account-box" style="margin-bottom:18px;display:flex;align-items:center;gap:8px;padding:10px 12px;"></div>
 
       <div class="sectionhead" style="margin-top:0;">名前</div>
       <div class="receipt" style="margin-bottom:18px;display:flex;align-items:center;gap:8px;padding:10px 12px;">
@@ -1250,6 +1289,8 @@ const obSteps = [
 ];
 let obStep = 0;
 let obAnswers = {};
+let onboardDone = false; /* 初回設定を終えたらタブバーを出す */
+function markOnboardDone(){ onboardDone = true; document.getElementById('main-tabs').classList.remove('is-hidden'); }
 let obReturnTab = 'home'; /* オンボーディング完了後、どのタブへ戻るか(初回起動時=home / マイページからの再設定=mypage) */
 let userName = ''; /* マイページで変更可能なユーザー名(初期値は空欄) */
 
@@ -1306,6 +1347,7 @@ function renderOnboard(){
 
     const skipBtn = document.getElementById('ob-skip');
     if (skipBtn) skipBtn.addEventListener('click', ()=> {
+      markOnboardDone();
       const target = obReturnTab;
       obReturnTab = 'home';
       switchTab(target);
@@ -1328,6 +1370,7 @@ function renderOnboard(){
       <button class="btn-primary" id="ob-finish">${finishLabel}</button>
     `;
     document.getElementById('ob-finish').addEventListener('click', ()=> {
+      markOnboardDone();
       if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) {
         pickDish(); /* 初期表示の料理がNG食材を含む場合だけ引き直す(回数はカウントしない) */
       }
@@ -1354,6 +1397,162 @@ renderNutritionReceipt();
   planExpiryText = `${formatFullDate(initialExpiry)} まで`;
 })();
 renderMypagePasscard();
+
+/* ================= 認証(Supabase Auth) =================
+   ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
+const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let currentUser = null;
+let authMode = 'login';
+
+function setAuthMsg(text, ok){
+  const el = document.getElementById('auth-msg');
+  el.textContent = text || '';
+  el.classList.toggle('ok', !!ok);
+}
+function setAuthMode(mode){
+  authMode = mode;
+  document.getElementById('auth-mode-login').classList.toggle('active', mode === 'login');
+  document.getElementById('auth-mode-signup').classList.toggle('active', mode === 'signup');
+  document.getElementById('auth-submit').textContent = mode === 'login' ? 'ログイン' : '新規登録する';
+  document.getElementById('auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  setAuthMsg('');
+}
+document.getElementById('auth-mode-login').addEventListener('click', () => setAuthMode('login'));
+document.getElementById('auth-mode-signup').addEventListener('click', () => setAuthMode('signup'));
+
+function authErrorText(err){
+  const m = (err && err.message || '').toLowerCase();
+  if (m.includes('invalid login')) return 'メールアドレスまたはパスワードが違います。';
+  if (m.includes('already registered')) return 'このメールアドレスは登録済みです。ログインしてください。';
+  if (m.includes('password')) return 'パスワードは6文字以上で入力してください。';
+  if (m.includes('email')) return 'メールアドレスを確認してください。';
+  return 'うまくいきませんでした。時間をおいてもう一度お試しください。';
+}
+
+document.getElementById('auth-submit').addEventListener('click', async () => {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { setAuthMsg('メールアドレスとパスワードを入力してください。'); return; }
+  const btn = document.getElementById('auth-submit');
+  btn.disabled = true; setAuthMsg('');
+  if (authMode === 'signup') savePreLoginState();
+  try {
+    if (authMode === 'login') {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error) throw error;
+      if (!data.session) setAuthMsg('確認メールを送りました。メール内のリンクを開くと登録が完了します。', true);
+    }
+  } catch (err) {
+    setAuthMsg(authErrorText(err));
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('auth-google').addEventListener('click', async () => {
+  const btn = document.getElementById('auth-google');
+  btn.disabled = true; setAuthMsg('');
+  savePreLoginState();
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: location.origin + location.pathname }
+  });
+  if (error) { setAuthMsg('Googleログインを開始できませんでした。設定を確認してください。'); btn.disabled = false; }
+});
+
+document.getElementById('auth-back').addEventListener('click', () => switchTab('mypage'));
+
+/* マイページのアカウント欄:未ログインならログイン画面への入口、ログイン中はメールとログアウト */
+function renderAccountBox(){
+  const box = document.getElementById('account-box');
+  if (!box) return;
+  if (currentUser) {
+    box.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(currentUser.email || '')}</span>
+      <button class="btn-ghost" id="logout-btn" style="width:auto;margin-top:0;white-space:nowrap;padding:10px 14px;">ログアウト</button>`;
+    document.getElementById('logout-btn').addEventListener('click', () => sb.auth.signOut());
+  } else {
+    box.innerHTML = `<span style="flex:1;color:var(--ink-soft);">ログインしていません</span>
+      <button class="btn-primary" id="goto-login-btn" style="width:auto;white-space:nowrap;padding:10px 14px;font-size:12.5px;">ログイン画面へ</button>`;
+    document.getElementById('goto-login-btn').addEventListener('click', () => { setAuthMsg(''); switchTab('auth'); });
+  }
+}
+
+/* Googleログインやメールのリンクでページがリロードされてもメモリのなかの初回設定が消えないよう、遷移前に退避する */
+const PRE_LOGIN_KEY = 'gohan_pre_login';
+function savePreLoginState(){
+  try { sessionStorage.setItem(PRE_LOGIN_KEY, JSON.stringify({ obAnswers, userName })); } catch (e) {}
+}
+function restorePreLoginState(){
+  try {
+    const raw = sessionStorage.getItem(PRE_LOGIN_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(PRE_LOGIN_KEY);
+    const saved = JSON.parse(raw);
+    obAnswers = saved.obAnswers || {};
+    if (saved.userName) userName = saved.userName;
+    return true;
+  } catch (e) { return false; }
+}
+
+/* 定期プランの購読状態をSupabaseから読み込む。
+   ※テーブル名・列名は仮定です(subscriptions: user_id / status / expires_at)。実際のDBに合わせて変更してください */
+async function loadSubscription(user){
+  try {
+    const { data, error } = await sb.from('subscriptions')
+      .select('status, expires_at')
+      .eq('user_id', user.id)
+      .order('expires_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const expires = data && data.expires_at ? new Date(data.expires_at) : null;
+    isPlanActive = !!(data && data.status === 'active' && expires && expires > new Date());
+    if (isPlanActive) {
+      planExpiryText = `${formatFullDate(expires)} まで`;
+      document.querySelectorAll('.plan-expiry-date').forEach(el => { el.textContent = planExpiryText; });
+    }
+  } catch (err) {
+    console.error('subscription load failed', err);
+    isPlanActive = false;
+  }
+  renderMypagePasscard();
+}
+
+async function applySession(session){
+  const user = session ? session.user : null;
+  if (user) {
+    const isNew = !currentUser || currentUser.id !== user.id;
+    currentUser = user;
+    if (isNew) {
+      const restored = restorePreLoginState(); /* Google/メール認証でリロードされた直後 */
+      const meta = user.user_metadata || {};
+      if (!userName) userName = meta.full_name || meta.name || '';
+      if (restored) { renderSettingsSummary(); markOnboardDone(); }
+      renderProfileHeader();
+      renderAccountBox();
+      /* ログイン画面から、または認証後のリロード直後ならマイページへ。初回設定の途中ならそのまま続ける */
+      if (restored || document.getElementById('auth').classList.contains('active')) switchTab('mypage');
+      await loadSubscription(user);
+    }
+  } else if (currentUser) {
+    /* ログアウト:個人データが残らないよう最初の状態(初回設定)に戻す */
+    location.reload();
+    return;
+  }
+  document.getElementById('auth-google').disabled = false;
+}
+
+sb.auth.onAuthStateChange((event, session) => {
+  /* コールバック内でawaitするとSupabase側がロックされるため、次のtickで処理する */
+  setTimeout(() => applySession(session), 0);
+});
+renderAccountBox();
+sb.auth.getSession().then(({ data }) => applySession(data.session));
 </script>
 </body>
 </html>
