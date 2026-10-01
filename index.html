@@ -1400,8 +1400,8 @@ renderMypagePasscard();
 
 /* ================= 認証(Supabase Auth) =================
    ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
-const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
+const SUPABASE_URL = 'https://cltcezdgkgzkilusxvji.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsdGNlemRna2d6a2lsdXN4dmppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTE2MjEsImV4cCI6MjEwMzkyNzYyMX0.Vc5_9_p3RfP69xbtpaL_eqLm-A_MKZmliYAsdqMbKks';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let currentUser = null;
 let authMode = 'login';
@@ -1499,25 +1499,21 @@ function restorePreLoginState(){
   } catch (e) { return false; }
 }
 
-/* 定期プランの購読状態をSupabaseから読み込む。
-   ※テーブル名・列名は仮定です(subscriptions: user_id / status / expires_at)。実際のDBに合わせて変更してください */
+/* 定期プランの購読状態をSupabaseの my_plan ビューから読み込む。
+   「いま有料会員か」の判定(active で期限内 / 解約済みでも期限内)はDB側の is_premium に一本化している */
 async function loadSubscription(user){
   try {
-    const { data, error } = await sb.from('subscriptions')
-      .select('status, expires_at')
-      .eq('user_id', user.id)
-      .order('expires_at', { ascending: false })
-      .limit(1)
+    const { data, error } = await sb.from('my_plan')
+      .select('is_premium, expires_at')
       .maybeSingle();
     if (error) throw error;
-    const expires = data && data.expires_at ? new Date(data.expires_at) : null;
-    isPlanActive = !!(data && data.status === 'active' && expires && expires > new Date());
-    if (isPlanActive) {
-      planExpiryText = `${formatFullDate(expires)} まで`;
+    isPlanActive = !!(data && data.is_premium);
+    if (isPlanActive && data.expires_at) {
+      planExpiryText = `${formatFullDate(new Date(data.expires_at))} まで`;
       document.querySelectorAll('.plan-expiry-date').forEach(el => { el.textContent = planExpiryText; });
     }
   } catch (err) {
-    console.error('subscription load failed', err);
+    console.error('plan load failed', err);
     isPlanActive = false;
   }
   renderMypagePasscard();
