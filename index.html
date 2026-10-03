@@ -1426,12 +1426,20 @@ document.getElementById('auth-mode-login').addEventListener('click', () => setAu
 document.getElementById('auth-mode-signup').addEventListener('click', () => setAuthMode('signup'));
 
 function authErrorText(err){
-  const m = (err && err.message || '').toLowerCase();
-  if (m.includes('invalid login')) return 'メールアドレスまたはパスワードが違います。';
-  if (m.includes('already registered')) return 'このメールアドレスは登録済みです。ログインしてください。';
-  if (m.includes('password')) return 'パスワードは6文字以上で入力してください。';
-  if (m.includes('email')) return 'メールアドレスを確認してください。';
-  return 'うまくいきませんでした。時間をおいてもう一度お試しください。';
+  const raw = (err && err.message) || '';
+  const m = raw.toLowerCase();
+  console.error('auth error:', err);
+  let friendly;
+  if (m.includes('invalid login')) friendly = 'メールアドレスまたはパスワードが違います。';
+  else if (m.includes('email not confirmed')) friendly = 'メールの確認がまだ済んでいません。届いたメールのリンクを開いてください。';
+  else if (m.includes('already registered')) friendly = 'このメールアドレスは登録済みです。ログインしてください。';
+  else if (m.includes('rate limit')) friendly = '確認メールの送信回数が上限に達しました。しばらく待つか、Supabaseの Confirm email をオフにしてください。';
+  else if (m.includes('not authorized')) friendly = 'このアドレスには確認メールを送れません(Supabase標準のメール送信はチームメンバー宛のみ)。';
+  else if (m.includes('database error')) friendly = '登録時にDBでエラーが出ました。SQLの実行状況を確認してください。';
+  else if (m.includes('password')) friendly = 'パスワードは6文字以上で入力してください。';
+  else if (m.includes('email')) friendly = 'メールアドレスを確認してください。';
+  else friendly = 'うまくいきませんでした。';
+  return raw ? `${friendly}(詳細: ${raw})` : friendly;
 }
 
 document.getElementById('auth-submit').addEventListener('click', async () => {
@@ -1449,7 +1457,11 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
     } else {
       const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
       if (error) throw error;
-      if (!data.session) setAuthMsg('確認メールを送りました。メール内のリンクを開くと登録が完了します。', true);
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        setAuthMsg('このメールアドレスは登録済みです。ログインしてください。');
+      } else if (!data.session) {
+        setAuthMsg('確認メールを送りました。メール内のリンクを開くと登録が完了します。', true);
+      }
     }
   } catch (err) {
     setAuthMsg(authErrorText(err));
