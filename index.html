@@ -1400,7 +1400,7 @@ renderMypagePasscard();
 
 /* ================= 認証(Supabase Auth) =================
    ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
-const SUPABASE_URL = 'https://cltcezdgkgzkilusxvji.supabase.co';
+const SUPABASE_URL = 'https://cltcezdgkgzkllusxvji.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsdGNlemRna2d6a2lsdXN4dmppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTE2MjEsImV4cCI6MjEwMzkyNzYyMX0.Vc5_9_p3RfP69xbtpaL_eqLm-A_MKZmliYAsdqMbKks';
 let sb = null; /* ライブラリを読み込めなかった場合も、アプリ本体は動き続ける */
 try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }
@@ -1430,6 +1430,10 @@ function authErrorText(err){
   const m = raw.toLowerCase();
   console.error('auth error:', err);
   let friendly;
+  if (m.includes('failed to fetch') || m.includes('load failed') || m.includes('networkerror')) {
+    let host = ''; try { host = new URL(SUPABASE_URL).host; } catch (e) {}
+    return `Supabaseに接続できません。接続先「${host}」が正しいか、プロジェクトが一時停止していないか、広告ブロッカーが邪魔していないかを確認してください。`;
+  }
   if (m.includes('invalid login')) friendly = 'メールアドレスまたはパスワードが違います。';
   else if (m.includes('email not confirmed')) friendly = 'メールの確認がまだ済んでいません。届いたメールのリンクを開いてください。';
   else if (m.includes('already registered')) friendly = 'このメールアドレスは登録済みです。ログインしてください。';
