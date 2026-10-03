@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --paper:#EFE6D8;
@@ -1402,7 +1402,10 @@ renderMypagePasscard();
    ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
 const SUPABASE_URL = 'https://cltcezdgkgzkilusxvji.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsdGNlemRna2d6a2lsdXN4dmppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTE2MjEsImV4cCI6MjEwMzkyNzYyMX0.Vc5_9_p3RfP69xbtpaL_eqLm-A_MKZmliYAsdqMbKks';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let sb = null; /* ライブラリを読み込めなかった場合も、アプリ本体は動き続ける */
+try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }
+catch (e) { console.error('supabase init failed', e); }
+const AUTH_UNAVAILABLE = 'ログイン機能を読み込めませんでした。通信を確認して、ページを再読み込みしてください。';
 let currentUser = null;
 let authMode = 'login';
 
@@ -1434,6 +1437,7 @@ function authErrorText(err){
 document.getElementById('auth-submit').addEventListener('click', async () => {
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
+  if (!sb) { setAuthMsg(AUTH_UNAVAILABLE); return; }
   if (!email || !password) { setAuthMsg('メールアドレスとパスワードを入力してください。'); return; }
   const btn = document.getElementById('auth-submit');
   btn.disabled = true; setAuthMsg('');
@@ -1456,13 +1460,14 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
 
 document.getElementById('auth-google').addEventListener('click', async () => {
   const btn = document.getElementById('auth-google');
+  if (!sb) { setAuthMsg(AUTH_UNAVAILABLE); return; }
   btn.disabled = true; setAuthMsg('');
   savePreLoginState();
   const { error } = await sb.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: location.origin + location.pathname }
   });
-  if (error) { setAuthMsg('Googleログインを開始できませんでした。設定を確認してください。'); btn.disabled = false; }
+  if (error) { console.error('google sign-in failed', error); setAuthMsg('Googleログインを開始できませんでした(' + (error.message || '不明なエラー') + ')。SupabaseのGoogle設定を確認してください。'); btn.disabled = false; }
 });
 
 document.getElementById('auth-back').addEventListener('click', () => switchTab('mypage'));
@@ -1474,7 +1479,7 @@ function renderAccountBox(){
   if (currentUser) {
     box.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(currentUser.email || '')}</span>
       <button class="btn-ghost" id="logout-btn" style="width:auto;margin-top:0;white-space:nowrap;padding:10px 14px;">ログアウト</button>`;
-    document.getElementById('logout-btn').addEventListener('click', () => sb.auth.signOut());
+    document.getElementById('logout-btn').addEventListener('click', () => sb && sb.auth.signOut());
   } else {
     box.innerHTML = `<span style="flex:1;color:var(--ink-soft);">ログインしていません</span>
       <button class="btn-primary" id="goto-login-btn" style="width:auto;white-space:nowrap;padding:10px 14px;font-size:12.5px;">ログイン画面へ</button>`;
@@ -1502,6 +1507,7 @@ function restorePreLoginState(){
 /* 定期プランの購読状態をSupabaseの my_plan ビューから読み込む。
    「いま有料会員か」の判定(active で期限内 / 解約済みでも期限内)はDB側の is_premium に一本化している */
 async function loadSubscription(user){
+  if (!sb) return;
   try {
     const { data, error } = await sb.from('my_plan')
       .select('is_premium, expires_at')
@@ -1543,12 +1549,27 @@ async function applySession(session){
   document.getElementById('auth-google').disabled = false;
 }
 
-sb.auth.onAuthStateChange((event, session) => {
-  /* コールバック内でawaitするとSupabase側がロックされるため、次のtickで処理する */
-  setTimeout(() => applySession(session), 0);
-});
+/* Googleログインなどに失敗して戻ってきたとき、URLに付いてくるエラー内容をログイン画面に表示する */
+function showAuthErrorFromUrl(){
+  const params = new URLSearchParams(location.search + '&' + location.hash.replace(/^#/, ''));
+  const desc = params.get('error_description') || params.get('error');
+  if (!desc) return;
+  console.error('auth redirect error:', desc);
+  history.replaceState(null, '', location.pathname);
+  restorePreLoginState(); markOnboardDone();
+  switchTab('auth');
+  setAuthMsg('ログインできませんでした:' + desc);
+}
+
 renderAccountBox();
-sb.auth.getSession().then(({ data }) => applySession(data.session));
+if (sb) {
+  sb.auth.onAuthStateChange((event, session) => {
+    /* コールバック内でawaitするとSupabase側がロックされるため、次のtickで処理する */
+    setTimeout(() => applySession(session), 0);
+  });
+  sb.auth.getSession().then(({ data }) => applySession(data.session));
+}
+showAuthErrorFromUrl();
 </script>
 </body>
 </html>
