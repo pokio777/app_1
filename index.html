@@ -1400,11 +1400,25 @@ renderMypagePasscard();
 
 /* ================= 認証(Supabase Auth) =================
    ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
-const SUPABASE_URL = 'https://cltcezdgkgzkllusxvji.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsdGNlemRna2d6a2lsdXN4dmppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTE2MjEsImV4cCI6MjEwMzkyNzYyMX0.Vc5_9_p3RfP69xbtpaL_eqLm-A_MKZmliYAsdqMbKks';
+const SUPABASE_URL = 'https://ezaaygixbznquywvoecv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6YWF5Z2l4YnpucXV5d3ZvZWN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3OTE1MzIsImV4cCI6MjEwNjM2NzUzMn0.ldARcx0UUCuUcrTPXv-0KQA0QWcZt5axPANq8cQG-w8';
 let sb = null; /* ライブラリを読み込めなかった場合も、アプリ本体は動き続ける */
 try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }
 catch (e) { console.error('supabase init failed', e); }
+/* URLとキーが別プロジェクトのものだと「Failed to fetch」や「Invalid API key」になるので、先に気づけるようにする */
+const CONFIG_WARNING = (function(){
+  try {
+    if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.startsWith('YOUR-')) return 'anonキーがまだ設定されていません。index.html の SUPABASE_ANON_KEY に、SupabaseのProject Settings > API Keys にある anon (public) キーを入れてください。';
+    const parts = SUPABASE_ANON_KEY.split('.');
+    if (parts.length === 3) { /* 従来形式(eyJ...)のキーはプロジェクトIDを含むので突き合わせる */
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const sub = new URL(SUPABASE_URL).hostname.split('.')[0];
+      if (payload.ref && payload.ref !== sub) return 'SUPABASE_URL と SUPABASE_ANON_KEY が別のプロジェクトのものです。同じプロジェクトの値に揃えてください。';
+    }
+  } catch (e) {}
+  return '';
+})();
+if (CONFIG_WARNING) console.error(CONFIG_WARNING);
 const AUTH_UNAVAILABLE = 'ログイン機能を読み込めませんでした。通信を確認して、ページを再読み込みしてください。';
 let currentUser = null;
 let authMode = 'login';
@@ -1450,6 +1464,7 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   if (!sb) { setAuthMsg(AUTH_UNAVAILABLE); return; }
+  if (CONFIG_WARNING) { setAuthMsg(CONFIG_WARNING); return; }
   if (!email || !password) { setAuthMsg('メールアドレスとパスワードを入力してください。'); return; }
   const btn = document.getElementById('auth-submit');
   btn.disabled = true; setAuthMsg('');
@@ -1477,6 +1492,7 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
 document.getElementById('auth-google').addEventListener('click', async () => {
   const btn = document.getElementById('auth-google');
   if (!sb) { setAuthMsg(AUTH_UNAVAILABLE); return; }
+  if (CONFIG_WARNING) { setAuthMsg(CONFIG_WARNING); return; }
   btn.disabled = true; setAuthMsg('');
   savePreLoginState();
   const { error } = await sb.auth.signInWithOAuth({
