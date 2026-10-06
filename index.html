@@ -568,6 +568,17 @@ function updateIssueTime(){
 }
 updateIssueTime(); /* 初回発行時刻を固定。以降は引き直し時のみ更新する */
 
+/* 無料/有料の機能設定(DBから読み込む。読み込み前の初期値はコード側の既定値を使う) */
+const planFeatures = {}; /* planFeatures[tier][feature_key] = { enabled, limit } */
+function featureLimit(tier, key, fallback){
+  const f = planFeatures[tier] && planFeatures[tier][key];
+  return (f && f.limit_value != null) ? f.limit_value : fallback;
+}
+function featureEnabled(tier, key, fallback){
+  const f = planFeatures[tier] && planFeatures[tier][key];
+  return f ? !!f.enabled : fallback;
+}
+
 /* ---- 気分フィルターを考慮した「今日のご飯」抽選 ---- */
 /* 料理ナンバーは料理画像_発注メモ.md の「No」列に固定で対応(01〜12) */
 const dishes = [
@@ -1680,15 +1691,6 @@ async function loadAccountData(user, restoredFromLogin){
 
 /* ================= カタログ読み込み(Supabase) =================
    料理・レシピ・無料/有料の機能設定をDBから読み込む。失敗したらコード内の初期データのまま動く */
-const planFeatures = {}; /* planFeatures[tier][feature_key] = { enabled, limit } */
-function featureLimit(tier, key, fallback){
-  const f = planFeatures[tier] && planFeatures[tier][key];
-  return (f && f.limit_value != null) ? f.limit_value : fallback;
-}
-function featureEnabled(tier, key, fallback){
-  const f = planFeatures[tier] && planFeatures[tier][key];
-  return f ? !!f.enabled : fallback;
-}
 async function loadCatalog(){
   if (!sb) return;
   try {
