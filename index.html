@@ -1419,7 +1419,17 @@ renderMypagePasscard();
 const SUPABASE_URL = 'https://qjptymqefhtxtkmsmmhh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcHR5bXFlZmh0eHRrbXNtbWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNjM4NjQsImV4cCI6MjEwNjgzOTg2NH0.nmQtIeRDUTLh4vHVFcNfzV8Av1kjcOcHmc1TBz7PR60';
 let sb = null; /* ライブラリを読み込めなかった場合も、アプリ本体は動き続ける */
-try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }
+/* プレビュー用の枠(iframe)内では fetch が postMessage 経由になり、Headers オブジェクトを送れず失敗する。
+   通常のオブジェクトに変換してから fetch に渡す */
+function safeFetch(input, init){
+  if (init && init.headers && typeof Headers !== 'undefined' && init.headers instanceof Headers) {
+    const h = {};
+    init.headers.forEach((v, k) => { h[k] = v; });
+    init = Object.assign({}, init, { headers: h });
+  }
+  return fetch(input, init);
+}
+try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { fetch: safeFetch } }); }
 catch (e) { console.error('supabase init failed', e); }
 /* URLとキーが別プロジェクトのものだと「Failed to fetch」や「Invalid API key」になるので、先に気づけるようにする */
 const CONFIG_WARNING = (function(){
@@ -1691,36 +1701,45 @@ async function loadAccountData(user, restoredFromLogin){
 
 /* ================= カタログ読み込み(Supabase) =================
    料理・レシピ・無料/有料の機能設定をDBから読み込む。失敗したらコード内の初期データのまま動く */
+function describeError(e){
+  if (!e) return String(e);
+  return [e.message, e.code && ('code=' + e.code), e.status && ('status=' + e.status), e.details, e.hint].filter(Boolean).join(' / ') || JSON.stringify(e);
+}
 async function loadCatalog(){
-  if (!sb) return;
+  if (!window.supabase) return;
   try {
-    const [d, ing, st, ft] = await Promise.all([
-      sb.from('dishes').select('*').order('sort_order'),
-      sb.from('recipe_ingredients').select('dish_id,sort_order,name,amount').order('sort_order'),
-      sb.from('recipe_steps').select('dish_id,step_no,instruction').order('step_no'),
-      sb.from('plan_features').select('tier_code,feature_key,enabled,limit_value')
-    ]);
-    if (d.error) throw d.error;
-    if (ing.error) throw ing.error;
-    if (st.error) throw st.error;
-    if (ft.error) throw ft.error;
-    if (d.data && d.data.length) {
-      dishes.splice(0, dishes.length, ...d.data.map(r => ({
+    /* 料理・レシピ・機能設定は公開データなので、ログイン処理と切り離した専用クライアントで読む(認証のロックに影響されない) */
+    const pub = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'catalog-anon' },
+      global: { fetch: safeFetch }
+    });
+    const jobs = {
+      dishes: pub.from('dishes').select('*').order('sort_order'),
+      ing: pub.from('recipe_ingredients').select('dish_id,sort_order,name,amount').order('sort_order'),
+      steps: pub.from('recipe_steps').select('dish_id,step_no,instruction').order('step_no'),
+      features: pub.from('plan_features').select('tier_code,feature_key,enabled,limit_value')
+    };
+    const names = Object.keys(jobs);
+    const res = await Promise.all(names.map(n => jobs[n].then(r => r, e => ({ data: null, error: e }))));
+    const out = {};
+    names.forEach((n, i) => { out[n] = res[i]; if (res[i].error) console.error('catalog load failed [' + n + ']: ' + describeError(res[i].error)); });
+    if (out.dishes.data && out.dishes.data.length && out.ing.data && out.steps.data) {
+      dishes.splice(0, dishes.length, ...out.dishes.data.map(r => ({
         id: r.id, name: r.name, time: r.cook_time, cost: r.cost_label, serving: r.serving,
         moods: r.moods || [], stamp: [r.stamp_top, r.stamp_bottom],
         balance: { staple: r.staple, main: r.main_dish, side: r.side }, kcal: r.kcal
       })));
       Object.keys(recipes).forEach(k => delete recipes[k]);
       dishes.forEach(x => { recipes[x.id] = { ingredients: [], steps: [] }; });
-      ing.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].ingredients.push([r.name, r.amount]); });
-      st.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].steps.push(['STEP ' + r.step_no, r.instruction]); });
+      out.ing.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].ingredients.push([r.name, r.amount]); });
+      out.steps.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].steps.push(['STEP ' + r.step_no, r.instruction]); });
     }
-    (ft.data || []).forEach(r => {
+    (out.features.data || []).forEach(r => {
       (planFeatures[r.tier_code] = planFeatures[r.tier_code] || {})[r.feature_key] = r;
     });
     try { renderTodayPreview(); } catch (e) {}
   } catch (err) {
-    console.error('catalog load failed (using built-in data)', err);
+    console.error('catalog load failed (using built-in data): ' + describeError(err), err);
   }
 }
 
