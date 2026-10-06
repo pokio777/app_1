@@ -873,6 +873,7 @@ function renderFavoritesList(){
     el.addEventListener('click', () => {
       const id = Number(el.closest('.stub').dataset.dishId);
       favoriteDishIds.delete(id);
+      syncFavorite(id, false);
       renderFavoritesList();
       if (id === currentDishId) updateFavButtonState(id);
     });
@@ -889,8 +890,10 @@ const favBtn = document.getElementById('fav-btn');
 favBtn.addEventListener('click', () => {
   if (favoriteDishIds.has(currentDishId)){
     favoriteDishIds.delete(currentDishId);
+    syncFavorite(currentDishId, false);
   } else {
     favoriteDishIds.add(currentDishId);
+    syncFavorite(currentDishId, true);
   }
   updateFavButtonState(currentDishId);
   renderFavoritesList();
@@ -912,6 +915,7 @@ const historyStack = document.getElementById('history-stack');
 madeBtn.addEventListener('click', () => {
   if (madeDishIds.has(currentDishId)) return; /* 念のための二重防止 */
   madeDishIds.add(currentDishId);
+  syncHistory(currentDishId);
 
   const dishName = document.getElementById('detail-name').textContent;
   const now = new Date();
@@ -973,7 +977,7 @@ const nameSaveBtn = document.getElementById('name-save-btn');
 nameSaveBtn.addEventListener('click', () => {
   const input = document.getElementById('name-input');
   const value = input.value.trim();
-  if (value) userName = value;
+  if (value) { userName = value; saveProfileName(value); }
   renderProfileHeader();
 
   const original = nameSaveBtn.textContent;
@@ -1034,7 +1038,7 @@ function renderTodayPreview(){
     `<span class="tag">${dish.time}</span><span class="tag">${dish.cost}</span>`;
 
   const ingredients = (recipes[dish.id] && recipes[dish.id].ingredients) || [];
-  const shown = ingredients.slice(0, 2);
+  const shown = ingredients.slice(0, featureLimit('free', 'shopping_list_items', 2));
   const shownHtml = shown.map(([name, amount]) => `<div class="rline"><span>${name}</span><span>${amount}</span></div>`).join('');
   const lockedHtml = `<div class="rline" style="opacity:.35;"><span>残りの日は非表示</span><span>定期プランで解放</span></div>`;
   document.getElementById('preview-shopping-list').innerHTML = shownHtml + lockedHtml;
@@ -1371,6 +1375,7 @@ function renderOnboard(){
     `;
     document.getElementById('ob-finish').addEventListener('click', ()=> {
       markOnboardDone();
+      saveSettings();
       if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) {
         pickDish(); /* 初期表示の料理がNG食材を含む場合だけ引き直す(回数はカウントしない) */
       }
@@ -1400,8 +1405,8 @@ renderMypagePasscard();
 
 /* ================= 認証(Supabase Auth) =================
    ▼ Supabaseダッシュボード > Project Settings > API の値に置き換えてください(anon keyは公開してOKなキーです) */
-const SUPABASE_URL = 'https://ezaaygixbznquywvoecv.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6YWF5Z2l4YnpucXV5d3ZvZWN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3OTE1MzIsImV4cCI6MjEwNjM2NzUzMn0.ldARcx0UUCuUcrTPXv-0KQA0QWcZt5axPANq8cQG-w8';
+const SUPABASE_URL = 'https://qjptymqefhtxtkmsmmhh.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcHR5bXFlZmh0eHRrbXNtbWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNjM4NjQsImV4cCI6MjEwNjgzOTg2NH0.nmQtIeRDUTLh4vHVFcNfzV8Av1kjcOcHmc1TBz7PR60';
 let sb = null; /* ライブラリを読み込めなかった場合も、アプリ本体は動き続ける */
 try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }
 catch (e) { console.error('supabase init failed', e); }
@@ -1571,6 +1576,7 @@ async function applySession(session){
       renderAccountBox();
       /* ログイン画面から、または認証後のリロード直後ならマイページへ。初回設定の途中ならそのまま続ける */
       if (restored || document.getElementById('auth').classList.contains('active')) switchTab('mypage');
+      await loadAccountData(user, restored);
       await loadSubscription(user);
     }
   } else if (currentUser) {
@@ -1593,6 +1599,130 @@ function showAuthErrorFromUrl(){
   setAuthMsg('ログインできませんでした:' + desc);
 }
 
+/* ================= アカウントデータ(Supabase) =================
+   プロフィール・初回設定・お気に入り・「作った」履歴をアカウントごとにDBへ保存する。ログイン前は保存しない */
+async function saveProfileName(name){
+  if (!sb || !currentUser) return;
+  const { error } = await sb.from('profiles').update({ display_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
+  if (error) console.error('profile save failed', error);
+}
+async function saveSettings(){
+  if (!sb || !currentUser) return;
+  const { error } = await sb.from('user_settings').upsert({
+    user_id: currentUser.id,
+    cooking_level: obAnswers.level || null,
+    cook_time: obAnswers.time || null,
+    goal: obAnswers.goal || null,
+    ng_foods: obAnswers.ng || null,
+    updated_at: new Date().toISOString()
+  });
+  if (error) console.error('settings save failed', error);
+}
+async function syncFavorite(dishId, on){
+  if (!sb || !currentUser) return;
+  const q = on
+    ? sb.from('user_favorites').upsert({ user_id: currentUser.id, dish_id: dishId })
+    : sb.from('user_favorites').delete().eq('user_id', currentUser.id).eq('dish_id', dishId);
+  const { error } = await q;
+  if (error) console.error('favorite sync failed', error);
+}
+async function syncHistory(dishId){
+  if (!sb || !currentUser) return;
+  const { error } = await sb.from('user_history').insert({ user_id: currentUser.id, dish_id: dishId });
+  if (error) console.error('history save failed', error);
+}
+function renderHistoryFromRows(rows){
+  const stack = document.getElementById('history-stack');
+  stack.innerHTML = '';
+  if (!rows.length) {
+    stack.innerHTML = '<p class="sub" id="history-empty" style="margin:4px 0 8px;">まだ「作った」を押した料理がありません。</p>';
+    return;
+  }
+  rows.forEach(r => {
+    const dish = dishes.find(d => d.id === r.dish_id);
+    if (!dish) return;
+    const dt = new Date(r.made_at);
+    const stub = document.createElement('div');
+    stub.className = 'stub';
+    stub.innerHTML = `<i class="ti ti-ticket"></i><span class="nm">${escapeHtml(dish.name)}</span><span class="dt">${dt.getMonth() + 1}/${dt.getDate()}</span>`;
+    stack.appendChild(stub);
+  });
+}
+async function loadAccountData(user, restoredFromLogin){
+  if (!sb) return;
+  try {
+    const [p, st, fv, hs] = await Promise.all([
+      sb.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
+      sb.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
+      sb.from('user_favorites').select('dish_id').order('created_at'),
+      sb.from('user_history').select('dish_id,made_at').order('made_at', { ascending: false }).limit(50)
+    ]);
+    /* 名前:ログイン前に入力していた名前があれば優先してDBへ、なければDBの値を使う */
+    if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
+    else if (userName) saveProfileName(userName);
+    /* 初回設定:ログイン直前に回答していればそれをDBへ、なければDBの設定を復元 */
+    const answered = obAnswers && (obAnswers.level || obAnswers.time || obAnswers.goal || obAnswers.ng);
+    if (restoredFromLogin && answered) { saveSettings(); }
+    else if (st.data) {
+      obAnswers = { level: st.data.cooking_level || '', time: st.data.cook_time || '', goal: st.data.goal || '', ng: st.data.ng_foods || '' };
+      renderSettingsSummary(); markOnboardDone();
+    }
+    favoriteDishIds.clear();
+    (fv.data || []).forEach(r => favoriteDishIds.add(r.dish_id));
+    renderFavoritesList();
+    updateFavButtonState(currentDishId);
+    renderHistoryFromRows(hs.data || []);
+    renderProfileHeader();
+  } catch (err) {
+    console.error('account data load failed', err);
+  }
+}
+
+/* ================= カタログ読み込み(Supabase) =================
+   料理・レシピ・無料/有料の機能設定をDBから読み込む。失敗したらコード内の初期データのまま動く */
+const planFeatures = {}; /* planFeatures[tier][feature_key] = { enabled, limit } */
+function featureLimit(tier, key, fallback){
+  const f = planFeatures[tier] && planFeatures[tier][key];
+  return (f && f.limit_value != null) ? f.limit_value : fallback;
+}
+function featureEnabled(tier, key, fallback){
+  const f = planFeatures[tier] && planFeatures[tier][key];
+  return f ? !!f.enabled : fallback;
+}
+async function loadCatalog(){
+  if (!sb) return;
+  try {
+    const [d, ing, st, ft] = await Promise.all([
+      sb.from('dishes').select('*').order('sort_order'),
+      sb.from('recipe_ingredients').select('dish_id,sort_order,name,amount').order('sort_order'),
+      sb.from('recipe_steps').select('dish_id,step_no,instruction').order('step_no'),
+      sb.from('plan_features').select('tier_code,feature_key,enabled,limit_value')
+    ]);
+    if (d.error) throw d.error;
+    if (ing.error) throw ing.error;
+    if (st.error) throw st.error;
+    if (ft.error) throw ft.error;
+    if (d.data && d.data.length) {
+      dishes.splice(0, dishes.length, ...d.data.map(r => ({
+        id: r.id, name: r.name, time: r.cook_time, cost: r.cost_label, serving: r.serving,
+        moods: r.moods || [], stamp: [r.stamp_top, r.stamp_bottom],
+        balance: { staple: r.staple, main: r.main_dish, side: r.side }, kcal: r.kcal
+      })));
+      Object.keys(recipes).forEach(k => delete recipes[k]);
+      dishes.forEach(x => { recipes[x.id] = { ingredients: [], steps: [] }; });
+      ing.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].ingredients.push([r.name, r.amount]); });
+      st.data.forEach(r => { if (recipes[r.dish_id]) recipes[r.dish_id].steps.push(['STEP ' + r.step_no, r.instruction]); });
+    }
+    (ft.data || []).forEach(r => {
+      (planFeatures[r.tier_code] = planFeatures[r.tier_code] || {})[r.feature_key] = r;
+    });
+    try { renderTodayPreview(); } catch (e) {}
+  } catch (err) {
+    console.error('catalog load failed (using built-in data)', err);
+  }
+}
+
+loadCatalog();
 renderAccountBox();
 if (sb) {
   sb.auth.onAuthStateChange((event, session) => {
