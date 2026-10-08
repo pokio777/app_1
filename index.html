@@ -1326,6 +1326,20 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+/* 決済ページから ?checkout=success 付きで戻ってきた場合:ログイン確認後、有料に切り替わるまで確認する */
+(function handleCheckoutReturn(){
+  const q = new URLSearchParams(location.search).get('checkout');
+  if (!q) return;
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  if (q !== 'success') return;
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries++;
+    if (currentUser) { clearInterval(timer); if (!isPlanActive) confirmPurchase(); }
+    else if (tries > 30) clearInterval(timer);
+  }, 500);
+})();
+
 /* ---- オンボーディング:4問+収集データの確認画面 ---- */
 const obSteps = [
   { key:'level', title:'ふだん自炊はどのくらいする?', options:['ほぼ毎日','週2〜3回','たまに'] },
