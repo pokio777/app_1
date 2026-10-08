@@ -520,6 +520,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
 
 <script>
 function switchTab(name){
+  if (['home','plan','mypage'].includes(name)) { try { localStorage.setItem('kg_last_tab', name); } catch (e) {} }
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.t===name));
 
   if (name === 'plan') {
@@ -1284,18 +1285,40 @@ function completePlanPurchase(){
    決済ページを開いた後、ユーザーがこのタブに戻ってきたタイミング(=決済完了とみなす)で自動的に定期プラン画面へ切り替える */
 let awaitingPayment = false;
 
-const BUY_BASE_URL = 'https://server-1-l9ny.onrender.com/checkout';
-document.getElementById('buy-plan-btn').addEventListener('click', (e) => {
-  /* 誰が支払ったかをWebhook側で特定できるよう、ログイン中のアカウントIDとメールを決済サーバーへ渡す */
+document.getElementById('buy-plan-btn').addEventListener('click', async (e) => {
+  e.preventDefault();
+  /* 誰が支払うかを確実に特定するため、ログイン中のアカウントで決済ページ(Stripe)を作る */
   if (!currentUser) {
-    e.preventDefault();
     setAuthMsg('定期プランのお申し込みには、先にログイン(または新規登録)が必要です。');
     switchTab('auth');
     return;
   }
-  const q = new URLSearchParams({ client_reference_id: currentUser.id, email: currentUser.email || '' });
-  e.currentTarget.href = BUY_BASE_URL + '?' + q.toString();
-  awaitingPayment = true;
+  if (!sb) return;
+  const btn = e.currentTarget;
+  if (btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  const label = btn.textContent;
+  btn.textContent = '決済ページを準備中…';
+  try {
+    const { data, error } = await sb.functions.invoke('create-checkout', {
+      body: { return_url: location.origin + location.pathname }
+    });
+    if (error) throw error;
+    if (!data || !data.url) throw new Error((data && data.error) || 'no checkout url');
+    location.assign(data.url); /* 決済後は ?checkout=success 付きでこのアプリに戻る */
+  } catch (err) {
+    let code = '';
+    try { code = (await err.context.json()).error; } catch (e2) {}
+    if (code === 'already_premium') {
+      await loadSubscription(currentUser);
+      if (isPlanActive) { showPlanActive(); return; }
+    }
+    console.error('checkout failed', code || err);
+    alert('決済ページを開けませんでした。時間をおいてもう一度お試しください。');
+  } finally {
+    delete btn.dataset.busy;
+    btn.textContent = label;
+  }
 });
 
 function showPlanActive(){
@@ -1330,6 +1353,7 @@ document.addEventListener('visibilitychange', () => {
 (function handleCheckoutReturn(){
   const q = new URLSearchParams(location.search).get('checkout');
   if (!q) return;
+  window.__checkoutReturn = q;
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
   if (q !== 'success') return;
   let tries = 0;
@@ -1628,6 +1652,20 @@ async function loadSubscription(user){
   renderMypagePasscard();
 }
 
+/* ログインしたままアプリを閉じて、次に開いたとき:初回設定からではなく、前回開いていた画面から始める */
+function restoreLastScreen(){
+  if (!onboardDone) return; /* 初回設定がまだ(DBに設定がない)なら、そのまま初回設定から */
+  if (!document.getElementById('onboard').classList.contains('active')) return; /* すでに別の画面にいるなら触らない */
+  try {
+    if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) pickDish();
+  } catch (e) {}
+  let t = 'home';
+  if (window.__checkoutReturn === 'success') t = 'plan';
+  else { try { t = localStorage.getItem('kg_last_tab') || 'home'; } catch (e) {} }
+  if (!['home', 'plan', 'mypage'].includes(t)) t = 'home';
+  switchTab(t);
+}
+
 async function applySession(session){
   const user = session ? session.user : null;
   if (user) {
@@ -1644,6 +1682,7 @@ async function applySession(session){
       if (restored || document.getElementById('auth').classList.contains('active')) switchTab('mypage');
       await loadAccountData(user, restored);
       await loadSubscription(user);
+      restoreLastScreen();
     }
   } else if (currentUser) {
     /* ログアウト:個人データが残らないよう最初の状態(初回設定)に戻す */
