@@ -1284,14 +1284,45 @@ function completePlanPurchase(){
    決済ページを開いた後、ユーザーがこのタブに戻ってきたタイミング(=決済完了とみなす)で自動的に定期プラン画面へ切り替える */
 let awaitingPayment = false;
 
-document.getElementById('buy-plan-btn').addEventListener('click', () => {
+const BUY_BASE_URL = 'https://server-1-l9ny.onrender.com/checkout';
+document.getElementById('buy-plan-btn').addEventListener('click', (e) => {
+  /* 誰が支払ったかをWebhook側で特定できるよう、ログイン中のアカウントIDとメールを決済サーバーへ渡す */
+  if (!currentUser) {
+    e.preventDefault();
+    setAuthMsg('定期プランのお申し込みには、先にログイン(または新規登録)が必要です。');
+    switchTab('auth');
+    return;
+  }
+  const q = new URLSearchParams({ client_reference_id: currentUser.id, email: currentUser.email || '' });
+  e.currentTarget.href = BUY_BASE_URL + '?' + q.toString();
   awaitingPayment = true;
 });
 
+function showPlanActive(){
+  renderPurchasedPlan();
+  renderMypagePasscard();
+  switchSubTab('today');
+  showScreen('plan-active');
+}
+
+/* 決済ページから戻ったら、Stripe Webhook がDBを有料に更新したかを確認する(反映まで数秒かかることがある) */
+let checkingPurchase = false;
+async function confirmPurchase(){
+  if (checkingPurchase) return;
+  checkingPurchase = true;
+  try {
+    for (let i = 0; i < 10; i++) {
+      await loadSubscription(currentUser);
+      if (isPlanActive) { showPlanActive(); return; }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } finally { checkingPurchase = false; }
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && awaitingPayment && !isPlanActive) {
+  if (document.visibilityState === 'visible' && awaitingPayment && !isPlanActive && currentUser) {
     awaitingPayment = false;
-    completePlanPurchase();
+    confirmPurchase();
   }
 });
 
