@@ -564,6 +564,9 @@ function switchTab(name){
 /* ---- タブバーは変えずに画面だけ切り替える(定期プラン内の「購入後」表示など) ---- */
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active', s.id===id));
+  /* 上のタブの色(いまいる場所)も一緒に切り替える。購入後の画面は「定期プラン」タブの中なので、plan として扱う */
+  const tabName = id === 'plan-active' ? 'plan' : id;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.t === tabName));
 }
 
 /* ---- 定期プラン購入後画面内のセクション切り替え(今日/献立/買い物/栄養) ---- */
@@ -880,20 +883,40 @@ rerollBtn.addEventListener('click', () => {
   updateRerollUI();
 })();
 
-/* ---- 気分チップ(気分の一覧はDBの moods テーブルで管理) ---- */
+/* ---- 気分チップ(気分の一覧はDBの moods テーブルで管理) ----
+   選んだ気分は、ログイン中はアカウント(profiles.selected_moods)、未ログインはこの端末に保存する */
 let moodsRendered = false;
+let selectedMoods = null; /* 選択中の気分ID(null=まだ決まっていない → DBの初期設定を使う) */
+try { const m = JSON.parse(localStorage.getItem('kg_moods') || 'null'); if (Array.isArray(m)) selectedMoods = m; } catch (e) {}
+function applyMoodSelection(){
+  if (!selectedMoods) return;
+  document.querySelectorAll('.chiprow .chip').forEach(c => c.classList.toggle('on', selectedMoods.includes(c.dataset.mood)));
+}
+async function saveMoods(){
+  if (sb && currentUser) {
+    const { error } = await sb.from('profiles').update({ selected_moods: selectedMoods }).eq('id', currentUser.id);
+    if (error) console.error('moods save failed', error);
+  } else {
+    try { localStorage.setItem('kg_moods', JSON.stringify(selectedMoods)); } catch (e) {}
+  }
+}
 function renderMoodChips(list){
   const row = document.querySelector('.chiprow');
   if (!row || !list.length) return;
-  const sel = moodsRendered ? new Set(getSelectedMoods()) : new Set(list.filter(m => m.default_on).map(m => m.id));
+  const sel = selectedMoods ? new Set(selectedMoods)
+            : (moodsRendered ? new Set(getSelectedMoods()) : new Set(list.filter(m => m.default_on).map(m => m.id)));
   row.innerHTML = list.map(m =>
     `<div class="chip${sel.has(m.id) ? ' on' : ''}" data-mood="${escapeHtml(m.id)}"><i class="ti ${escapeHtml(m.icon)}"></i>${escapeHtml(m.label)}</div>`
   ).join('');
   moodsRendered = true;
 }
+applyMoodSelection(); /* 保存済みの選択を、読み込み直後から反映する */
 document.querySelector('.chiprow').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
-  if (chip) chip.classList.toggle('on');
+  if (!chip) return;
+  chip.classList.toggle('on');
+  selectedMoods = getSelectedMoods();
+  saveMoods();
 });
 
 /* ---- 「この一枚で決める」→ 今表示中の料理と一致するレシピへ遷移 ---- */
@@ -1036,6 +1059,8 @@ function renderProfileHeader(){
 /* マイページのパスカードを購読状態に応じて描画する。購読中は有効期限+解約ボタン、
    未購読(未購入 or 解約済み)は加入案内+定期プランへの導線を出す */
 function renderMypagePasscard(){
+  const lockbar = document.getElementById('lockbar-link');
+  if (lockbar) lockbar.style.display = isPlanActive ? 'none' : ''; /* 購読中はホーム下の「解放する?」案内を隠す */
   const box = document.getElementById('mypage-passcard');
   if (!box) return;
 
@@ -1682,7 +1707,7 @@ async function applySession(session){
     }
   } else if (currentUser) {
     /* ログアウト:個人データが残らないよう最初の状態(初回設定)に戻す */
-    try { ['kg_onboarding', 'kg_daily', 'kg_last_tab'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+    try { ['kg_onboarding', 'kg_daily', 'kg_last_tab', 'kg_moods'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     location.reload();
     return;
   }
@@ -1755,7 +1780,7 @@ async function loadAccountData(user, restoredFromLogin){
   try {
     const today = todayKey();
     const [p, st, fv, hs, dl] = await Promise.all([
-      sb.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
+      sb.from('profiles').select('display_name,selected_moods').eq('id', user.id).maybeSingle(),
       sb.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
       sb.from('user_favorites').select('dish_id').order('created_at'),
       sb.from('user_history').select('dish_id,made_at,made_date').order('made_at', { ascending: false }).limit(50),
@@ -1764,6 +1789,9 @@ async function loadAccountData(user, restoredFromLogin){
     /* 名前:ログイン前に入力していた名前があれば優先してDBへ、なければDBの値を使う */
     if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
     else if (userName) saveProfileName(userName);
+    /* 気分の選択:アカウントに保存があればそれを復元、なければ今の選択を保存 */
+    if (p.data && Array.isArray(p.data.selected_moods)) { selectedMoods = p.data.selected_moods; applyMoodSelection(); }
+    else { selectedMoods = getSelectedMoods(); saveMoods(); }
     /* 初回設定:ログイン直前に回答していればそれをDBへ、なければDBの設定を復元 */
     if (st.data) {
       /* アカウントに設定があれば、それを使う(この端末にも書き戻す) */
