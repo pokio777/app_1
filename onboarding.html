@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>初回設定 ー 今日のご飯</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+html.booting .screen, html.booting #main-tabs{visibility:hidden;}
+#boot-loader{display:none;position:fixed;inset:0;align-items:center;justify-content:center;font-size:13px;color:#7a6f63;letter-spacing:.08em;}
+html.booting #boot-loader{display:flex;}
+:root{
+  --paper:#EFE6D8;
+  --card:#F8F2E6;
+  --card-deep:#EEE3D0;
+  --ink:#2B2620;
+  --ink-soft:#877A66;
+  --stamp:#C23B2E;
+  --stamp-deep:#8F2B21;
+  --green:#57764F;
+  --green-bg:#E4EADF;
+  --line:#CBBFA8;
+  --gold:#C9992F;
+  --radius:10px;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:#DCD2BE;
+  font-family:'Zen Kaku Gothic New', sans-serif;
+  color:var(--ink);
+  padding:32px 12px 80px;
+}
+.wrap{max-width:400px;margin:0 auto;}
+.brandbar{text-align:center;margin-bottom:20px;}
+.brandbar .logo{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  font-weight:700;font-size:34px;line-height:1;letter-spacing:-.01em;color:var(--ink);
+  margin:0 0 6px;
+}
+.brandbar .logo i{font-size:26px;color:var(--stamp);transform:rotate(-8deg);}
+.brandbar .logo .accent{color:var(--stamp);}
+.brandbar .catch{
+  font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.04em;
+  color:var(--ink-soft);margin:0;
+}
+.tabs{display:flex;gap:4px;background:var(--card-deep);border-radius:12px;padding:4px;margin-bottom:16px;overflow-x:auto;}
+.tab{flex:1 0 auto;border:none;background:transparent;padding:9px 10px;border-radius:9px;font-family:inherit;font-size:12px;font-weight:500;color:var(--ink-soft);white-space:nowrap;cursor:pointer;}
+.tab.active{background:var(--paper);color:var(--ink);box-shadow:0 1px 0 rgba(0,0,0,.05);}
+
+/* 定期プラン購入後画面内のセクション切り替え(今日/献立/買い物/栄養) */
+.subtabs{display:flex;gap:4px;background:var(--card-deep);border-radius:11px;padding:4px;margin-bottom:16px;}
+.subtab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;border:none;background:transparent;padding:8px 4px;border-radius:8px;font-family:inherit;font-size:10.5px;font-weight:600;color:var(--ink-soft);cursor:pointer;}
+.subtab i{font-size:16px;}
+.subtab.active{background:var(--paper);color:var(--stamp);box-shadow:0 1px 0 rgba(0,0,0,.05);}
+.subscreen{display:none;}
+.subscreen.active{display:block;}
+
+.phone{
+  background:var(--paper);
+  border-radius:26px;
+  padding:14px 14px 20px;
+  border:1px solid #CABFA8;
+  box-shadow:0 18px 40px -22px rgba(43,38,32,.5);
+  position:relative;
+}
+.screen{display:none;}
+.screen.active{display:block;}
+
+/* ticket card */
+.ticket{
+  background:var(--card);
+  border-radius:14px;
+  border:1px solid var(--line);
+  position:relative;
+  overflow:hidden;
+}
+.ticket::before,.ticket::after{
+  content:"";position:absolute;width:16px;height:16px;background:#DCD2BE;
+  border-radius:50%;top:50%;transform:translateY(-50%);
+}
+.ticket::before{left:-8px;}
+.ticket::after{right:-8px;}
+.perf{border-top:2px dashed var(--line);margin:0;}
+
+.eyebrow{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.06em;color:var(--ink-soft);margin:0 0 2px;}
+h1.title{font-size:16px;font-weight:700;margin:0 0 2px;}
+p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
+
+.chiprow{display:flex;gap:8px;overflow-x:auto;padding:14px 0 16px;}
+.chip{display:flex;align-items:center;gap:5px;white-space:nowrap;padding:7px 13px;border-radius:20px;border:1px solid var(--line);background:var(--card);font-size:12px;color:var(--ink-soft);cursor:pointer;}
+.chip.on{background:var(--stamp);border-color:var(--stamp);color:#fff;font-weight:500;}
+
+.stampbox{position:relative;height:118px;background:var(--card-deep);display:flex;align-items:center;justify-content:center;}
+.stampbox.has-photo{background-size:cover;background-position:center;height:170px;}
+.stampbox i{font-size:34px;color:var(--ink-soft);}
+.stamp{
+  position:absolute;top:10px;right:14px;
+  border:2px solid var(--stamp);color:var(--stamp);
+  font-family:'Space Mono',monospace;font-weight:700;font-size:11px;
+  border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;
+  transform:rotate(-12deg);text-align:center;line-height:1.1;letter-spacing:.02em;
+}
+.body{padding:14px 16px 16px;}
+.dish{font-size:17px;font-weight:700;margin:0 0 8px;}
+.tagrow{display:flex;gap:6px;margin-bottom:14px;}
+.tag{font-family:'Space Mono',monospace;font-size:11px;background:var(--card-deep);color:var(--ink-soft);padding:3px 8px;border-radius:6px;}
+.btn-primary{width:100%;background:var(--stamp);color:#fff;border:none;border-radius:8px;padding:13px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;}
+.btn-ghost{width:100%;background:transparent;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit;font-size:12px;color:var(--ink-soft);margin-top:8px;cursor:pointer;}
+.btn-ghost.is-disabled{opacity:.45;cursor:not-allowed;pointer-events:none;}
+
+.lockbar{display:flex;align-items:center;justify-content:space-between;margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;transition:background .15s ease, border-color .15s ease;}
+.lockbar:hover,.lockbar:focus-visible{background:var(--card-deep);border-color:var(--stamp);outline:none;}
+.lockbar:active{transform:scale(.99);}
+.lockbar p{margin:0;}
+.lockbar .t1{font-size:12px;font-weight:700;}
+.lockbar .t2{font-size:11px;color:var(--ink-soft);margin-top:2px;}
+
+/* week strip */
+.weekstrip{display:flex;gap:6px;margin:4px 0 16px;}
+.daystub{flex:1;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 4px;text-align:center;position:relative;}
+.daystub .today-mark{position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:var(--stamp);color:#fff;font-size:8px;font-weight:700;padding:1px 6px;border-radius:8px;white-space:nowrap;line-height:1.5;}
+.daystub.is-today{border-color:var(--stamp);border-width:2px;}
+.daystub .d{font-family:'Space Mono',monospace;font-size:10px;color:var(--ink-soft);}
+.daystub.locked{opacity:.4;}
+.daystub i{font-size:14px;margin-top:4px;display:block;}
+.daystub.unlocked{background:var(--stamp);border-color:var(--stamp);}
+.daystub.unlocked .d{color:#F8DEDA;}
+.daystub.unlocked i{color:#fff;}
+
+.receipt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:'Space Mono',monospace;font-size:12px;}
+.rline{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line);}
+.rline:last-child{border-bottom:none;}
+
+/* 栄養バランスのドーナツチャート */
+.donut-wrap{display:flex;align-items:center;gap:16px;padding:2px 0 12px;}
+.donut-svg{position:relative;flex-shrink:0;width:96px;height:96px;}
+.donut-svg svg{width:100%;height:100%;}
+.donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Zen Kaku Gothic New',sans-serif;}
+.donut-center .kcal-num{font-family:'Space Mono',monospace;font-size:16px;font-weight:700;color:var(--ink);line-height:1;}
+.donut-center .kcal-unit{font-size:9px;color:var(--ink-soft);margin-top:2px;}
+.donut-legend{flex:1;display:flex;flex-direction:column;gap:7px;}
+.donut-legend-item{display:flex;align-items:center;gap:7px;font-family:'Zen Kaku Gothic New',sans-serif;font-size:11.5px;}
+.donut-legend-item .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.donut-legend-item .lbl{color:var(--ink);flex:1;}
+.donut-legend-item .val{color:var(--ink-soft);font-family:'Space Mono',monospace;font-size:10.5px;white-space:nowrap;}
+
+/* 無料版:栄養バランスの完全ロック表示 */
+.nutrition-locked{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;padding:14px 6px 6px;cursor:pointer;}
+.nutrition-locked i{font-size:22px;color:var(--ink-soft);margin-bottom:2px;}
+.nutrition-locked .nl-title{font-family:'Zen Kaku Gothic New',sans-serif;font-size:12.5px;font-weight:700;color:var(--ink);margin:0;}
+.nutrition-locked .nl-sub{font-family:'Zen Kaku Gothic New',sans-serif;font-size:10.5px;color:var(--ink-soft);margin:0;line-height:1.5;}
+
+/* 解約確認モーダル(スマホ枠内にオーバーレイ表示) */
+.modal-overlay{display:none;position:absolute;inset:0;background:rgba(43,38,32,.6);align-items:center;justify-content:center;padding:20px;border-radius:26px;z-index:50;}
+.modal-overlay.active{display:flex;}
+.modal-card{background:var(--paper);border-radius:14px;padding:20px;width:100%;box-shadow:0 20px 40px -18px rgba(0,0,0,.5);}
+.modal-title{font-size:15px;font-weight:700;margin:0 0 8px;color:var(--ink);}
+.modal-sub{font-size:12px;color:var(--ink-soft);line-height:1.65;margin:0 0 18px;}
+.modal-actions{display:flex;gap:8px;}
+.modal-actions button{flex:1;border-radius:8px;padding:11px;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;border:none;}
+.modal-actions .btn-back{background:var(--card);color:var(--ink);border:1px solid var(--line);}
+.modal-actions .btn-danger{background:var(--stamp);color:#fff;}
+
+/* 冷蔵庫・家にあるものチェックリスト */
+.fridge-checklist{display:flex;flex-wrap:wrap;gap:8px;}
+.fridge-item{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:7px 12px;font-size:12px;cursor:pointer;user-select:none;transition:background .15s,border-color .15s;}
+.fridge-item input[type=checkbox]{accent-color:var(--green);width:14px;height:14px;cursor:pointer;flex-shrink:0;}
+.fridge-item.is-checked{background:var(--green-bg);border-color:var(--green);}
+.fridge-item.is-checked span{color:var(--green);text-decoration:line-through;}
+
+/* 今日買うべきものカード */
+.today-tobuy-card{border-color:var(--stamp);}
+.tobuy-empty{display:flex;align-items:center;gap:8px;color:var(--green);font-weight:700;font-size:13px;padding:2px 0;}
+.tobuy-empty i{font-size:18px;}
+
+/* 曜日別買い物リストで「家にある」食材を弱める表示 */
+.rline.have-at-home{opacity:.45;}
+.rline.have-at-home span:first-child{text-decoration:line-through;}
+.have-tag{display:inline-block;font-family:'Zen Kaku Gothic New',sans-serif;font-size:9px;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin-left:6px;text-decoration:none;vertical-align:middle;}
+
+.passcard{background:var(--ink);color:var(--paper);border-radius:12px;padding:18px;position:relative;overflow:hidden;}
+.passcard .eyebrow{color:#C9BBA2;}
+.passcard .price{font-family:'Space Mono',monospace;font-size:30px;font-weight:700;margin:6px 0 0;line-height:1;}
+.passcard .price span{font-size:12px;font-weight:400;color:#C9BBA2;}
+.passcard .price-sub{font-size:11px;color:#C9BBA2;margin:6px 0 14px;}
+.passcard .price-sub b{color:var(--paper);font-weight:700;}
+.passcard button,.passcard a.btn-pay{display:block;width:100%;background:var(--stamp);color:#fff;border:none;border-radius:8px;padding:14px;font-family:inherit;font-weight:700;font-size:14px;margin-top:4px;cursor:pointer;text-align:center;text-decoration:none;box-sizing:border-box;}
+.passcard .trust{font-size:10px;color:#9C8E77;text-align:center;margin:8px 0 0;}
+.passcard .perklist{list-style:none;margin:0 0 14px;padding:0;border-top:1px solid #4A443A;padding-top:12px;}
+.passcard .perklist li{display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.5;margin-bottom:8px;color:#EFE6D8;}
+.passcard .perklist li:last-child{margin-bottom:0;}
+.passcard .perklist i{color:var(--stamp);font-size:14px;margin-top:1px;flex-shrink:0;}
+
+/* 定期プラン:価値訴求(何が嬉しいか) */
+.valueprops{display:flex;gap:8px;margin:2px 0 18px;}
+.valueprop{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 6px 10px;text-align:center;}
+.valueprop i{font-size:19px;color:var(--stamp);margin-bottom:6px;display:block;}
+.valueprop .vp-title{font-size:11px;font-weight:700;margin:0 0 2px;line-height:1.3;}
+.valueprop .vp-sub{font-size:9.5px;color:var(--ink-soft);margin:0;line-height:1.3;}
+
+/* route steps */
+.route{position:relative;padding-left:26px;margin-top:4px;}
+.route::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--line);}
+.stop{position:relative;padding-bottom:16px;}
+.stop:last-child{padding-bottom:0;}
+.stop::before{content:"";position:absolute;left:-26px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--card);border:2px solid var(--stamp);}
+.stop .st{font-family:'Space Mono',monospace;font-size:10px;color:var(--ink-soft);margin:0 0 3px;}
+.stop p{margin:0;font-size:13px;line-height:1.6;}
+
+.ingredient{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.ingredient:last-child{border-bottom:none;}
+.ingredient .amt{color:var(--ink-soft);font-family:'Space Mono',monospace;font-size:12px;}
+
+.stubstack .stub{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;}
+.stubstack .stub.stub-today{border-color:var(--stamp);border-width:2px;background:var(--card-deep);}
+.stubstack .stub i{font-size:16px;color:var(--stamp);}
+.stubstack .stub .nm{font-size:13px;font-weight:500;flex:1;}
+.stubstack .stub .dt{font-family:'Space Mono',monospace;font-size:10px;color:var(--ink-soft);}
+
+.punchrow{display:flex;gap:8px;margin-bottom:18px;}
+.punch{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);}
+.punch.done{background:var(--stamp);border-color:var(--stamp);}
+.optbtn{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin-bottom:8px;font-family:inherit;font-size:14px;cursor:pointer;}
+.optbtn.sel{border-color:var(--stamp);background:var(--stamp);color:#fff;font-weight:500;}
+.optbtn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-primary:disabled{opacity:.35;cursor:not-allowed;}
+.ob-back{background:none;border:none;color:var(--ink-soft);font-family:'Space Mono',monospace;font-size:11px;padding:0;margin-bottom:10px;cursor:pointer;}
+.ob-input{width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:12px 14px;font-family:inherit;font-size:14px;color:var(--ink);margin-bottom:8px;}
+.ob-input:focus{outline:2px solid var(--stamp);outline-offset:1px;}
+.ob-summary .rline span:last-child{font-family:'Zen Kaku Gothic New',sans-serif;font-weight:500;}
+
+.sectionhead{font-size:12px;font-weight:700;color:var(--ink-soft);margin:16px 0 8px;}
+
+.heart-icon{transition:fill .15s ease, stroke .15s ease;outline:none;}
+.heart-icon.filled{fill:var(--stamp);stroke:var(--stamp);}
+.heart-icon:focus-visible{outline:2px solid var(--stamp);outline-offset:2px;border-radius:4px;}
+
+/* ログイン画面 */
+.tabs.is-hidden{display:none;}
+.auth-switch{display:flex;gap:4px;background:var(--card-deep);border-radius:10px;padding:4px;margin:14px 0 14px;}
+.auth-switch button{flex:1;border:none;background:transparent;padding:8px;border-radius:7px;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;}
+.auth-switch button.active{background:var(--paper);color:var(--ink);box-shadow:0 1px 0 rgba(0,0,0,.05);}
+.auth-field{margin-bottom:10px;}
+.auth-field label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:4px;}
+.auth-divider{display:flex;align-items:center;gap:10px;margin:16px 0;font-size:11px;color:var(--ink-soft);}
+.auth-divider::before,.auth-divider::after{content:"";flex:1;border-top:1px dashed var(--line);}
+.btn-google{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:12px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;}
+.btn-google:hover{background:var(--card);}
+.btn-google i{font-size:18px;color:#DB4437;}
+.auth-msg{min-height:18px;margin:10px 0 0;font-size:12px;line-height:1.5;color:var(--stamp-deep);}
+.auth-msg.ok{color:var(--green);}
+.btn-primary:disabled,.btn-google:disabled{opacity:.5;cursor:not-allowed;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brandbar">
+    <p class="logo"><i class="ti ti-ticket"></i>今日<span class="accent">の</span>ご飯</p>
+    <p class="catch">一人暮らし大学生の「今日、何食う?」を1枚で。</p>
+  </div>
+
+  <div class="phone">
+    <section class="screen active" id="onboard">
+      <div id="ob-eyebrow" class="eyebrow"></div>
+      <div id="ob-punch" class="punchrow"></div>
+      <div id="ob-body"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* 初回設定ページ:4問に答えると、この端末(未ログイン)とアカウント(ログイン中)に保存して、アプリ(index.html)へ戻る */
+const SUPABASE_URL = 'https://qjptymqefhtxtkmsmmhh.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcHR5bXFlZmh0eHRrbXNtbWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNjM4NjQsImV4cCI6MjEwNjgzOTg2NH0.nmQtIeRDUTLh4vHVFcNfzV8Av1kjcOcHmc1TBz7PR60';
+const LS_KEY = 'kg_onboarding';
+const params = new URLSearchParams(location.search);
+const editMode = params.get('mode') === 'edit';           /* マイページからの再設定 */
+const returnTab = params.get('return') === 'mypage' ? 'mypage' : 'home';
+const APP_URL = new URL('index.html', location.href).toString();
+
+/* プレビュー用の枠(iframe)内では Headers オブジェクトを送れないため、通常のオブジェクトにしてから fetch する */
+function safeFetch(input, init){
+  if (init && init.headers && typeof Headers !== 'undefined' && init.headers instanceof Headers) {
+    const h = {}; init.headers.forEach((v, k) => { h[k] = v; });
+    init = Object.assign({}, init, { headers: h });
+  }
+  return fetch(input, init);
+}
+let sb = null;
+try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { fetch: safeFetch } }); }
+catch (e) { console.error('supabase init failed', e); }
+
+const obSteps = [
+  { key:'level', title:'ふだん自炊はどのくらいする?', options:['ほぼ毎日','週2〜3回','たまに'] },
+  { key:'time',  title:'調理にかけられる時間は?', options:['10分以内・とにかく最速で','15〜20分・ちゃんと作りたい','20分以上OK・凝りたい日もある'] },
+  { key:'goal',  title:'今回の目的は?', options:['とにかく節約','とにかく時短','栄養バランスも意識したい'] },
+  { key:'ng',    title:'苦手な食材・アレルギーはある?', type:'text', placeholder:'例:パクチー、えび(なければ空欄でOK)' }
+];
+let obStep = 0;
+let obAnswers = {};
+try {
+  const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+  if (editMode && d && d.answers) obAnswers = Object.assign({}, d.answers); /* 再設定のときは今の回答から始める */
+} catch (e) {}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+async function complete(){
+  const btns = document.querySelectorAll('#ob-body button');
+  btns.forEach(b => { b.disabled = true; });
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({ done: true, answers: obAnswers }));
+    localStorage.setItem('kg_last_tab', returnTab);
+  } catch (e) {}
+  /* ログイン中なら、アカウントにも保存する */
+  if (sb) {
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data && data.session) {
+        const { error } = await sb.from('user_settings').upsert({
+          user_id: data.session.user.id,
+          cooking_level: obAnswers.level || null,
+          cook_time: obAnswers.time || null,
+          goal: obAnswers.goal || null,
+          ng_foods: obAnswers.ng || null,
+          updated_at: new Date().toISOString()
+        });
+        if (error) console.error('settings save failed', error);
+      }
+    } catch (e) { console.error('settings save failed', e); }
+  }
+  location.replace(APP_URL);
+}
+
+function renderOnboard(){
+  const eyebrow = document.getElementById('ob-eyebrow');
+  const punch = document.getElementById('ob-punch');
+  const body = document.getElementById('ob-body');
+
+  if (obStep < obSteps.length){
+    const s = obSteps[obStep];
+    eyebrow.textContent = `STEP ${obStep+1} / ${obSteps.length}`;
+    punch.innerHTML = obSteps.map((_,i)=>`<div class="punch ${i<obStep?'done':''}"></div>`).join('');
+
+    const isText = s.type==='text';
+    const optsHtml = isText
+      ? `<input class="ob-input" id="ob-text" type="text" placeholder="${s.placeholder}" value="${escapeHtml(obAnswers[s.key]||'')}">`
+      : s.options.map(opt=>`<button class="optbtn ${obAnswers[s.key]===opt?'sel':''}" data-opt="${escapeHtml(opt)}">${opt}</button>`).join('');
+
+    const nextDisabled = (!isText && !obAnswers[s.key]) ? 'disabled' : '';
+    const nextLabel = obStep===obSteps.length-1 ? '登録して始める' : '次へ';
+    const backHtml = obStep>0
+      ? '<button class="ob-back" id="ob-back">&larr; 戻る</button>'
+      : (editMode ? '<button class="ob-back" id="ob-cancel">&larr; マイページへ戻る</button>' : '');
+
+    body.innerHTML = `
+      ${backHtml}
+      <h1 class="title">${s.title}</h1>
+      <p class="sub" style="margin-bottom:16px;">${isText ? 'なければ空欄のままで大丈夫です。' : '目安でOKです。あとから変更できます。'}</p>
+      <div id="ob-opts">${optsHtml}</div>
+      <button class="btn-primary" id="ob-next" style="margin-top:16px;" ${nextDisabled}>${nextLabel}</button>
+      ${isText ? '' : '<button class="btn-ghost" id="ob-skip">スキップして始める</button>'}
+    `;
+
+    if (isText){
+      document.getElementById('ob-text').addEventListener('input', e=>{ obAnswers[s.key] = e.target.value; });
+    } else {
+      body.querySelectorAll('.optbtn').forEach(btn=>{
+        btn.addEventListener('click', ()=>{ obAnswers[s.key] = btn.dataset.opt; renderOnboard(); });
+      });
+    }
+    document.getElementById('ob-next').addEventListener('click', ()=>{
+      if (isText) obAnswers[s.key] = document.getElementById('ob-text').value;
+      obStep++;
+      renderOnboard();
+    });
+    const backBtn = document.getElementById('ob-back');
+    if (backBtn) backBtn.addEventListener('click', ()=>{ obStep--; renderOnboard(); });
+    const cancelBtn = document.getElementById('ob-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', ()=>{ try { localStorage.setItem('kg_last_tab', returnTab); } catch (e) {} location.replace(APP_URL); });
+    const skipBtn = document.getElementById('ob-skip');
+    if (skipBtn) skipBtn.addEventListener('click', complete);
+
+  } else {
+    eyebrow.textContent = '受付完了';
+    punch.innerHTML = obSteps.map(()=>'<div class="punch done"></div>').join('');
+    const finishLabel = returnTab === 'mypage' ? 'マイページへ戻る' : 'ホームへ';
+    body.innerHTML = `
+      <h1 class="title">登録ありがとうございます</h1>
+      <p class="sub" style="margin-bottom:16px;">この内容をもとに、今日のご飯を提案します。</p>
+      <div class="receipt ob-summary" style="margin-bottom:16px;">
+        <div class="rline"><span>自炊レベル</span><span>${escapeHtml(obAnswers.level || '未回答')}</span></div>
+        <div class="rline"><span>調理時間</span><span>${escapeHtml(obAnswers.time || '未回答')}</span></div>
+        <div class="rline"><span>目的</span><span>${escapeHtml(obAnswers.goal || '未回答')}</span></div>
+        <div class="rline"><span>NG食材</span><span>${obAnswers.ng ? escapeHtml(obAnswers.ng) : 'なし'}</span></div>
+      </div>
+      <button class="btn-primary" id="ob-finish">${finishLabel}</button>
+    `;
+    document.getElementById('ob-finish').addEventListener('click', complete);
+  }
+}
+renderOnboard();
+
+/* ログイン中の再設定なら、アカウントに保存されている回答から始める */
+if (editMode && sb) {
+  sb.auth.getSession().then(async ({ data }) => {
+    if (!data || !data.session) return;
+    const { data: st } = await sb.from('user_settings').select('*').eq('user_id', data.session.user.id).maybeSingle();
+    if (st && obStep === 0) {
+      obAnswers = { level: st.cooking_level || '', time: st.cook_time || '', goal: st.goal || '', ng: st.ng_foods || '' };
+      renderOnboard();
+    }
+  }).catch(() => {});
+}
+</script>
+</body>
+</html>

@@ -9,17 +9,27 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-/* 保存済みログイン(または認証直後)がある場合は、ログイン確認が終わるまで画面を隠す(初回設定が一瞬見えるのを防ぐ) */
+/* 起動時の判定:
+   ・初回設定がまだ(この端末に記録なし)で、保存済みログインもない → すぐ onboarding.html へ
+   ・保存済みログインがある → ログイン確認が終わるまで画面を隠す(初回設定が一瞬見えるのを防ぐ) */
 (function(){
+  var done = false, has = false;
   try {
-    var has = false;
+    var d = JSON.parse(localStorage.getItem('kg_onboarding') || 'null');
+    done = !!(d && d.done);
     for (var i = 0; i < localStorage.length; i++) {
       var k = localStorage.key(i);
       if (k && /^sb-.*-auth-token$/.test(k)) { has = true; break; }
     }
     if (/[?&#](code|access_token)=/.test(location.search + location.hash)) has = true;
-    if (has) document.documentElement.classList.add('booting');
   } catch (e) {}
+  window.__onboardDone = done;
+  if (!done && !has) {
+    document.documentElement.classList.add('booting');
+    location.replace('onboarding.html');
+    return;
+  }
+  if (has) document.documentElement.classList.add('booting');
 })();
 </script>
 <style>
@@ -278,7 +288,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
     <p class="catch">一人暮らし大学生の「今日、何食う?」を1枚で。</p>
   </div>
 
-  <div class="tabs is-hidden" id="main-tabs">
+  <div class="tabs" id="main-tabs">
     <button class="tab" data-t="home">ホーム</button>
     <button class="tab" data-t="plan">定期プラン</button>
     <button class="tab" data-t="detail">レシピ</button>
@@ -307,15 +317,8 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
       <p class="auth-msg" id="auth-msg" role="status"></p>
     </section>
 
-    <!-- ONBOARDING -->
-    <section class="screen active" id="onboard">
-      <div id="ob-eyebrow" class="eyebrow"></div>
-      <div id="ob-punch" class="punchrow"></div>
-      <div id="ob-body"></div>
-    </section>
-
     <!-- HOME -->
-    <section class="screen" id="home">
+    <section class="screen active" id="home">
       <p class="eyebrow" id="issue-time">--:-- 発行</p>
       <h1 class="title">今日はどんな気分?</h1>
       <div class="chiprow">
@@ -573,7 +576,6 @@ document.querySelectorAll('#plan-active .subtab').forEach(btn => {
 });
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.addEventListener('click',()=>{
-    if(tab.dataset.t==='onboard'){ obStep=0; obAnswers={}; obReturnTab='home'; renderOnboard(); }
     switchTab(tab.dataset.t);
   });
 });
@@ -1100,10 +1102,7 @@ function renderSettingsSummary(){
 }
 
 document.getElementById('edit-settings-btn').addEventListener('click', () => {
-  obReturnTab = 'mypage';
-  obStep = 0;
-  renderOnboard();
-  switchTab('onboard');
+  location.href = 'onboarding.html?mode=edit&return=mypage'; /* 初回設定は別ページ */
 });
 
 /* ---- 定期プラン:週間カレンダーのバッジ表示(解放済みの曜日のみ栄養ドットを出す) ---- */
@@ -1445,109 +1444,24 @@ document.addEventListener('visibilitychange', () => {
   }, 500);
 })();
 
-/* ---- オンボーディング:4問+収集データの確認画面 ---- */
-const obSteps = [
-  { key:'level', title:'ふだん自炊はどのくらいする?', options:['ほぼ毎日','週2〜3回','たまに'] },
-  { key:'time',  title:'調理にかけられる時間は?', options:['10分以内・とにかく最速で','15〜20分・ちゃんと作りたい','20分以上OK・凝りたい日もある'] },
-  { key:'goal',  title:'今回の目的は?', options:['とにかく節約','とにかく時短','栄養バランスも意識したい'] },
-  { key:'ng',    title:'苦手な食材・アレルギーはある?', type:'text', placeholder:'例:パクチー、えび(なければ空欄でOK)' }
-];
-let obStep = 0;
+/* ---- 初回設定の回答(入力は onboarding.html。ここでは保存済みの回答を読み込んで使う) ---- */
 let obAnswers = {};
-let onboardDone = false; /* 初回設定を終えたらタブバーを出す */
-function markOnboardDone(){ onboardDone = true; document.getElementById('main-tabs').classList.remove('is-hidden'); }
-let obReturnTab = 'home'; /* オンボーディング完了後、どのタブへ戻るか(初回起動時=home / マイページからの再設定=mypage) */
+let onboardDone = !!window.__onboardDone;
+try {
+  const d = JSON.parse(localStorage.getItem('kg_onboarding') || 'null');
+  if (d && d.answers) obAnswers = d.answers;
+} catch (e) {}
+function markOnboardDone(){ onboardDone = true; }
+function writeLocalOnboarding(){
+  try { localStorage.setItem('kg_onboarding', JSON.stringify({ done: true, answers: obAnswers })); } catch (e) {}
+}
 let userName = ''; /* マイページで変更可能なユーザー名(初期値は空欄) */
 
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
-
-function renderOnboard(){
-  const eyebrow = document.getElementById('ob-eyebrow');
-  const punch = document.getElementById('ob-punch');
-  const body = document.getElementById('ob-body');
-
-  if (obStep < obSteps.length){
-    const s = obSteps[obStep];
-    eyebrow.textContent = `STEP ${obStep+1} / ${obSteps.length}`;
-    punch.innerHTML = obSteps.map((_,i)=>`<div class="punch ${i<obStep?'done':''}"></div>`).join('');
-
-    const isText = s.type==='text';
-    const optsHtml = isText
-      ? `<input class="ob-input" id="ob-text" type="text" placeholder="${s.placeholder}" value="${escapeHtml(obAnswers[s.key]||'')}">`
-      : s.options.map(opt=>`<button class="optbtn ${obAnswers[s.key]===opt?'sel':''}" data-opt="${escapeHtml(opt)}">${opt}</button>`).join('');
-
-    const nextDisabled = (!isText && !obAnswers[s.key]) ? 'disabled' : '';
-    const nextLabel = obStep===obSteps.length-1 ? '登録して始める' : '次へ';
-
-    body.innerHTML = `
-      ${obStep>0 ? '<button class="ob-back" id="ob-back">&larr; 戻る</button>' : ''}
-      <h1 class="title">${s.title}</h1>
-      <p class="sub" style="margin-bottom:16px;">${isText ? 'なければ空欄のままで大丈夫です。' : '目安でOKです。あとから変更できます。'}</p>
-      <div id="ob-opts">${optsHtml}</div>
-      <button class="btn-primary" id="ob-next" style="margin-top:16px;" ${nextDisabled}>${nextLabel}</button>
-      ${isText ? '' : '<button class="btn-ghost" id="ob-skip">スキップして始める</button>'}
-    `;
-
-    if (isText){
-      document.getElementById('ob-text').addEventListener('input', e=>{ obAnswers[s.key] = e.target.value; });
-    } else {
-      body.querySelectorAll('.optbtn').forEach(btn=>{
-        btn.addEventListener('click', ()=>{
-          obAnswers[s.key] = btn.dataset.opt;
-          renderOnboard();
-        });
-      });
-    }
-
-    document.getElementById('ob-next').addEventListener('click', ()=>{
-      if (isText) obAnswers[s.key] = document.getElementById('ob-text').value;
-      obStep++;
-      renderOnboard();
-    });
-
-    const backBtn = document.getElementById('ob-back');
-    if (backBtn) backBtn.addEventListener('click', ()=>{ obStep--; renderOnboard(); });
-
-    const skipBtn = document.getElementById('ob-skip');
-    if (skipBtn) skipBtn.addEventListener('click', ()=> {
-      markOnboardDone();
-      const target = obReturnTab;
-      obReturnTab = 'home';
-      switchTab(target);
-    });
-
-  } else {
-    /* 収集結果の確認(=「登録データ」の見える化) */
-    eyebrow.textContent = '受付完了';
-    punch.innerHTML = obSteps.map(()=>'<div class="punch done"></div>').join('');
-    const finishLabel = obReturnTab === 'mypage' ? 'マイページへ戻る' : 'ホームへ';
-    body.innerHTML = `
-      <h1 class="title">登録ありがとうございます</h1>
-      <p class="sub" style="margin-bottom:16px;">この内容をもとに、今日のご飯を提案します。</p>
-      <div class="receipt ob-summary" style="margin-bottom:16px;">
-        <div class="rline"><span>自炊レベル</span><span>${escapeHtml(obAnswers.level || '未回答')}</span></div>
-        <div class="rline"><span>調理時間</span><span>${escapeHtml(obAnswers.time || '未回答')}</span></div>
-        <div class="rline"><span>目的</span><span>${escapeHtml(obAnswers.goal || '未回答')}</span></div>
-        <div class="rline"><span>NG食材</span><span>${obAnswers.ng ? escapeHtml(obAnswers.ng) : 'なし'}</span></div>
-      </div>
-      <button class="btn-primary" id="ob-finish">${finishLabel}</button>
-    `;
-    document.getElementById('ob-finish').addEventListener('click', ()=> {
-      markOnboardDone();
-      saveSettings();
-      if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) {
-        pickDish(); /* 初期表示の料理がNG食材を含む場合だけ引き直す(回数はカウントしない) */
-      }
-      const target = obReturnTab;
-      obReturnTab = 'home';
-      if (target === 'mypage') renderSettingsSummary();
-      switchTab(target);
-    });
-  }
-}
-renderOnboard();
+renderSettingsSummary();
+try { if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) pickDish(); } catch (e) {} /* 表示中の料理がNG食材を含む場合だけ引き直す(回数は数えない) */
 renderRecipeDetail(currentDishId); /* レシピタブを直接開いても写真が正しく出るように初期化 */
 renderProfileHeader();
 renderSettingsSummary();
@@ -1735,8 +1649,8 @@ async function loadSubscription(user){
 
 /* ログインしたままアプリを閉じて、次に開いたとき:初回設定からではなく、前回開いていた画面から始める */
 function restoreLastScreen(){
-  if (!onboardDone) return; /* 初回設定がまだ(DBに設定がない)なら、そのまま初回設定から */
-  if (!document.getElementById('onboard').classList.contains('active')) return; /* すでに別の画面にいるなら触らない */
+  const active = document.querySelector('.screen.active');
+  if (!active || active.id !== 'home') return; /* すでに別の画面にいるなら触らない */
   try {
     if (isDishNg(dishes.find(d => d.id === currentDishId), getNgKeywords())) pickDish();
   } catch (e) {}
@@ -1768,6 +1682,7 @@ async function applySession(session){
     }
   } else if (currentUser) {
     /* ログアウト:個人データが残らないよう最初の状態(初回設定)に戻す */
+    try { ['kg_onboarding', 'kg_daily', 'kg_last_tab'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     location.reload();
     return;
   }
@@ -1850,11 +1765,16 @@ async function loadAccountData(user, restoredFromLogin){
     if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
     else if (userName) saveProfileName(userName);
     /* 初回設定:ログイン直前に回答していればそれをDBへ、なければDBの設定を復元 */
-    const answered = obAnswers && (obAnswers.level || obAnswers.time || obAnswers.goal || obAnswers.ng);
-    if (restoredFromLogin && answered) { saveSettings(); }
-    else if (st.data) {
+    if (st.data) {
+      /* アカウントに設定があれば、それを使う(この端末にも書き戻す) */
       obAnswers = { level: st.data.cooking_level || '', time: st.data.cook_time || '', goal: st.data.goal || '', ng: st.data.ng_foods || '' };
-      renderSettingsSummary(); markOnboardDone();
+      writeLocalOnboarding(); markOnboardDone();
+      renderSettingsSummary();
+    } else if (onboardDone) {
+      saveSettings(); /* 未ログインのうちに済ませた初回設定を、アカウントに保存する */
+    } else {
+      location.replace('onboarding.html'); /* どこにも初回設定がなければ、初回設定へ */
+      return;
     }
     favoriteDishIds.clear();
     (fv.data || []).forEach(r => favoriteDishIds.add(r.dish_id));
@@ -1941,7 +1861,13 @@ if (sb) {
     /* コールバック内でawaitするとSupabase側がロックされるため、次のtickで処理する */
     setTimeout(() => applySession(session), 0);
   });
-  sb.auth.getSession().then(({ data }) => applySession(data.session)).catch(err => console.error('session load failed', err)).finally(finishBoot);
+  sb.auth.getSession().then(async ({ data }) => {
+    await applySession(data.session);
+    if (!currentUser) {
+      if (!onboardDone) { location.replace('onboarding.html'); return; }
+      restoreLastScreen();
+    }
+  }).catch(err => console.error('session load failed', err)).finally(finishBoot);
 }
 showAuthErrorFromUrl();
 </script>
