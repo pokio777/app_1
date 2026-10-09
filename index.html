@@ -522,6 +522,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
       <div class="stubstack" id="favorites-stack">
         <p class="sub" id="favorites-empty" style="margin:4px 0 8px;">まだお気に入りに登録した料理がありません。</p>
       </div>
+      <p class="sub" id="app-version" style="margin:22px 0 0;font-size:10px;text-align:center;opacity:.55;"></p>
     </section>
 
     <!-- 解約確認モーダル -->
@@ -760,7 +761,8 @@ const dishPhotos = {
 const stampboxEl = document.getElementById('dish-stampbox');
 let currentDishId = 1;
 const favoriteDishIds = new Set(); /* お気に入り登録した料理IDを記録 */
-const fridgeItems = new Set(); /* 「家にある」とチェックされた食材名を記録(定期プラン購入後の「今日買うべきもの」に使用) */
+const fridgeItems = new Set(); /* 「家にある」とチェックされた食材名(定期プラン購入後の「今日買うべきもの」に使用)。ログイン中はDBの user_fridge、未ログインはこの端末に保存 */
+try { (JSON.parse(localStorage.getItem('kg_fridge') || '[]') || []).forEach(n => fridgeItems.add(n)); } catch (e) {}
 let isPlanActive = false; /* 定期プランを購読中かどうか。購入で true、解約で false になり、マイページ・タブ遷移の出し分けに使う */
 let planExpiryText = ''; /* 現在の有効期限の表示文字列(「2026/09/01 まで」)。購入・初期化のたびに更新し、マイページのパスカード再描画にも使う */
 
@@ -1300,6 +1302,7 @@ function renderFridgeChecklist(weekDishes){
     cb.addEventListener('change', (e) => {
       const name = e.target.dataset.ingredient;
       if (e.target.checked) fridgeItems.add(name); else fridgeItems.delete(name);
+      syncFridge(name, e.target.checked);
       e.target.closest('.fridge-item').classList.toggle('is-checked', e.target.checked);
       renderTodayToBuy(weekDishes);
       /* 買い物リストの「おうちにある」表示も同時に更新 */
@@ -1703,11 +1706,12 @@ async function applySession(session){
       await loadAccountData(user, restored);
       await loadSubscription(user);
       updateRerollUI();
+      if (isPlanActive && document.getElementById('plan-active').classList.contains('active')) renderPurchasedPlan();
       restoreLastScreen();
     }
   } else if (currentUser) {
     /* ログアウト:個人データが残らないよう最初の状態(初回設定)に戻す */
-    try { ['kg_onboarding', 'kg_daily', 'kg_last_tab', 'kg_moods'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+    try { ['kg_onboarding', 'kg_daily', 'kg_last_tab', 'kg_moods', 'kg_fridge'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     location.reload();
     return;
   }
@@ -1753,6 +1757,17 @@ async function syncFavorite(dishId, on){
   const { error } = await q;
   if (error) console.error('favorite sync failed', error);
 }
+async function syncFridge(name, on){
+  if (sb && currentUser) {
+    const q = on
+      ? sb.from('user_fridge').upsert({ user_id: currentUser.id, name })
+      : sb.from('user_fridge').delete().eq('user_id', currentUser.id).eq('name', name);
+    const { error } = await q;
+    if (error) console.error('fridge sync failed', error);
+  } else {
+    try { localStorage.setItem('kg_fridge', JSON.stringify([...fridgeItems])); } catch (e) {}
+  }
+}
 async function syncHistory(dishId){
   if (!sb || !currentUser) return;
   const { error } = await sb.from('user_history').insert({ user_id: currentUser.id, dish_id: dishId });
@@ -1779,12 +1794,13 @@ async function loadAccountData(user, restoredFromLogin){
   if (!sb) return;
   try {
     const today = todayKey();
-    const [p, st, fv, hs, dl] = await Promise.all([
+    const [p, st, fv, hs, dl, fr] = await Promise.all([
       sb.from('profiles').select('display_name,selected_moods').eq('id', user.id).maybeSingle(),
       sb.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
       sb.from('user_favorites').select('dish_id').order('created_at'),
       sb.from('user_history').select('dish_id,made_at,made_date').order('made_at', { ascending: false }).limit(50),
-      sb.from('user_daily').select('dish_id,rerolls_used').eq('day', today).maybeSingle()
+      sb.from('user_daily').select('dish_id,rerolls_used').eq('day', today).maybeSingle(),
+      sb.from('user_fridge').select('name')
     ]);
     /* 名前:ログイン前に入力していた名前があれば優先してDBへ、なければDBの値を使う */
     if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
@@ -1804,6 +1820,16 @@ async function loadAccountData(user, restoredFromLogin){
       location.replace('onboarding.html'); /* どこにも初回設定がなければ、初回設定へ */
       return;
     }
+    /* 冷蔵庫のチェック:アカウントに保存があればそれを使う。なければ、未ログインのうちにチェックした分をアカウントへ保存する */
+    if (fr.data && fr.data.length) {
+      fridgeItems.clear();
+      fr.data.forEach(r => fridgeItems.add(r.name));
+    } else if (!fr.error && fridgeItems.size) {
+      const rows = [...fridgeItems].map(name => ({ user_id: user.id, name }));
+      const { error } = await sb.from('user_fridge').upsert(rows);
+      if (error) console.error('fridge push failed', error);
+    }
+    try { localStorage.removeItem('kg_fridge'); } catch (e) {}
     favoriteDishIds.clear();
     (fv.data || []).forEach(r => favoriteDishIds.add(r.dish_id));
     renderFavoritesList();
@@ -1880,6 +1906,9 @@ async function loadCatalog(){
 }
 
 loadCatalog();
+const APP_VERSION = '2026.10.09-c'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
+document.getElementById('app-version').textContent = 'ver ' + APP_VERSION;
+console.info('今日のご飯 ver ' + APP_VERSION);
 function finishBoot(){ document.documentElement.classList.remove('booting'); }
 setTimeout(finishBoot, 6000); /* 万一ログイン確認が終わらなくても画面が出るように */
 if (!sb) finishBoot();
