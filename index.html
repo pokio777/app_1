@@ -314,6 +314,10 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
       <button class="btn-primary" id="auth-submit" style="margin-top:6px;">ログイン</button>
       <div class="auth-divider">または</div>
       <button class="btn-google" id="auth-google"><i class="ti ti-brand-google"></i>Googleでログイン</button>
+      <div id="auth-inapp-note" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:10px;font-size:12px;line-height:1.7;">
+        LINEなどのアプリ内ブラウザでは、Googleの規則によりGoogleログインを使えません。ChromeやSafariで開くか、上のメールアドレスで登録・ログインしてください。
+        <button class="btn-ghost" id="auth-open-browser" style="margin-top:8px;">ブラウザで開く</button>
+      </div>
       <p class="auth-msg" id="auth-msg" role="status"></p>
     </section>
 
@@ -529,7 +533,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
     <div class="modal-overlay" id="cancel-modal">
       <div class="modal-card">
         <p class="modal-title">定期プランを解約しますか?</p>
-        <p class="modal-sub">解約すると、7日分の献立・買い物リスト・栄養チャートがすぐに利用できなくなります。今日の1日分は引き続き無料プレビューでご利用いただけます。</p>
+        <p class="modal-sub">解約しても、お支払い済みの有効期限まではこのまま7日分の献立などをご利用いただけます。期限後は自動更新されず、無料版に戻ります。</p>
         <div class="modal-actions">
           <button class="btn-back" id="cancel-modal-back">やめておく</button>
           <button class="btn-danger" id="cancel-modal-confirm">解約する</button>
@@ -764,6 +768,7 @@ const favoriteDishIds = new Set(); /* お気に入り登録した料理IDを記�
 const fridgeItems = new Set(); /* 「家にある」とチェックされた食材名(定期プラン購入後の「今日買うべきもの」に使用)。ログイン中はDBの user_fridge、未ログインはこの端末に保存 */
 try { (JSON.parse(localStorage.getItem('kg_fridge') || '[]') || []).forEach(n => fridgeItems.add(n)); } catch (e) {}
 let isPlanActive = false; /* 定期プランを購読中かどうか。購入で true、解約で false になり、マイページ・タブ遷移の出し分けに使う */
+let planStatus = ''; /* DBの契約状態('active' / 'canceled' など)。解約済みでも期限までは有料のまま */
 let planExpiryText = ''; /* 現在の有効期限の表示文字列(「2026/09/01 まで」)。購入・初期化のたびに更新し、マイページのパスカード再描画にも使う */
 
 function getSelectedMoods(){
@@ -1066,7 +1071,13 @@ function renderMypagePasscard(){
   const box = document.getElementById('mypage-passcard');
   if (!box) return;
 
-  if (isPlanActive) {
+  if (isPlanActive && planStatus === 'canceled') {
+    box.innerHTML = `
+      <p class="eyebrow">週間定期券・解約済み</p>
+      <p class="price plan-expiry-date" style="font-size:16px;">${planExpiryText}</p>
+      <p class="sub" style="margin:8px 0 0;color:inherit;opacity:.8;">この日まで7日分の献立をご利用いただけます。自動更新はされません。</p>
+    `;
+  } else if (isPlanActive) {
     box.innerHTML = `
       <p class="eyebrow">週間定期券・有効</p>
       <p class="price plan-expiry-date" style="font-size:16px;">${planExpiryText}</p>
@@ -1089,10 +1100,25 @@ function renderMypagePasscard(){
 document.getElementById('cancel-modal-back').addEventListener('click', () => {
   document.getElementById('cancel-modal').classList.remove('active');
 });
-document.getElementById('cancel-modal-confirm').addEventListener('click', () => {
-  isPlanActive = false;
-  document.getElementById('cancel-modal').classList.remove('active');
-  renderMypagePasscard();
+document.getElementById('cancel-modal-confirm').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (btn.disabled) return;
+  if (!sb || !currentUser) { alert('解約するにはログインが必要です。'); return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '処理中…';
+  try {
+    const { data, error } = await sb.functions.invoke('cancel-subscription');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'cancel failed');
+    document.getElementById('cancel-modal').classList.remove('active');
+    await loadSubscription(currentUser); /* 解約済み(期限まで有料)の状態を読み込み直す */
+    alert('解約の手続きをしました。有効期限までは引き続きご利用いただけます。');
+  } catch (err) {
+    console.error('cancel failed', err);
+    alert('解約の手続きができませんでした。時間をおいてもう一度お試しください。');
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
 });
 
 const nameSaveBtn = document.getElementById('name-save-btn');
@@ -1607,7 +1633,31 @@ document.getElementById('auth-submit').addEventListener('click', async () => {
   }
 });
 
+/* LINE・Instagramなどのアプリ内ブラウザでは、Googleがログインを拒否する(disallowed_useragent)。
+   押しても失敗するだけなので、ボタンを止めて、ブラウザで開く案内を出す */
+const UA = navigator.userAgent || '';
+const IS_LINE = /Line\//i.test(UA);
+const IN_APP_BROWSER = /Line\/|FBAN|FBAV|Instagram|MicroMessenger|KAKAOTALK|Snapchat|musical_ly|BytedanceWebview|Twitter|; wv\)/i.test(UA);
+if (IN_APP_BROWSER) {
+  const g = document.getElementById('auth-google');
+  g.disabled = true;
+  g.style.opacity = '.5';
+  document.getElementById('auth-inapp-note').style.display = 'block';
+  document.getElementById('auth-open-browser').addEventListener('click', async () => {
+    if (IS_LINE) {
+      /* LINEは、URLに openExternalBrowser=1 を付けると端末の標準ブラウザで開く */
+      const u = new URL(location.href);
+      u.searchParams.set('openExternalBrowser', '1');
+      location.href = u.toString();
+    } else {
+      try { await navigator.clipboard.writeText(location.origin + location.pathname); alert('URLをコピーしました。ChromeかSafariに貼り付けて開いてください。'); }
+      catch (e) { alert('右上のメニューから「ブラウザで開く」を選んでください。'); }
+    }
+  });
+}
+
 document.getElementById('auth-google').addEventListener('click', async () => {
+  if (IN_APP_BROWSER) return;
   const btn = document.getElementById('auth-google');
   if (!sb) { setAuthMsg(AUTH_UNAVAILABLE); return; }
   if (CONFIG_WARNING) { setAuthMsg(CONFIG_WARNING); return; }
@@ -1660,10 +1710,11 @@ async function loadSubscription(user){
   if (!sb) return;
   try {
     const { data, error } = await sb.from('my_plan')
-      .select('is_premium, expires_at')
+      .select('is_premium, expires_at, status')
       .maybeSingle();
     if (error) throw error;
     isPlanActive = !!(data && data.is_premium);
+    planStatus = (data && data.status) || '';
     if (isPlanActive && data.expires_at) {
       planExpiryText = `${formatFullDate(new Date(data.expires_at))} まで`;
       document.querySelectorAll('.plan-expiry-date').forEach(el => { el.textContent = planExpiryText; });
@@ -1671,6 +1722,7 @@ async function loadSubscription(user){
   } catch (err) {
     console.error('plan load failed', err);
     isPlanActive = false;
+    planStatus = '';
   }
   renderMypagePasscard();
 }
@@ -1715,7 +1767,7 @@ async function applySession(session){
     location.reload();
     return;
   }
-  document.getElementById('auth-google').disabled = false;
+  document.getElementById('auth-google').disabled = IN_APP_BROWSER;
 }
 
 /* Googleログインなどに失敗して戻ってきたとき、URLに付いてくるエラー内容をログイン画面に表示する */
@@ -1906,7 +1958,7 @@ async function loadCatalog(){
 }
 
 loadCatalog();
-const APP_VERSION = '2026.10.09-c'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
+const APP_VERSION = '2026.10.09-e'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
 document.getElementById('app-version').textContent = 'ver ' + APP_VERSION;
 console.info('今日のご飯 ver ' + APP_VERSION);
 function finishBoot(){ document.documentElement.classList.remove('booting'); }
