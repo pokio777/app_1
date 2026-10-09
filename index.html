@@ -8,7 +8,24 @@
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* 保存済みログイン(または認証直後)がある場合は、ログイン確認が終わるまで画面を隠す(初回設定が一瞬見えるのを防ぐ) */
+(function(){
+  try {
+    var has = false;
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && /^sb-.*-auth-token$/.test(k)) { has = true; break; }
+    }
+    if (/[?&#](code|access_token)=/.test(location.search + location.hash)) has = true;
+    if (has) document.documentElement.classList.add('booting');
+  } catch (e) {}
+})();
+</script>
 <style>
+html.booting .screen, html.booting #main-tabs{visibility:hidden;}
+#boot-loader{display:none;position:fixed;inset:0;align-items:center;justify-content:center;font-size:13px;color:#7a6f63;letter-spacing:.08em;}
+html.booting #boot-loader{display:flex;}
 :root{
   --paper:#EFE6D8;
   --card:#F8F2E6;
@@ -254,6 +271,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
 </style>
 </head>
 <body>
+<div id="boot-loader">読み込み中…</div>
 <div class="wrap">
   <div class="brandbar">
     <p class="logo"><i class="ti ti-ticket"></i>今日<span class="accent">の</span>ご飯</p>
@@ -736,14 +754,13 @@ const dishPhotos = {
 };
 const stampboxEl = document.getElementById('dish-stampbox');
 let currentDishId = 1;
-const madeDishIds = new Set(); /* 「作った」を押した料理IDを記録(重複記録を防ぐ) */
 const favoriteDishIds = new Set(); /* お気に入り登録した料理IDを記録 */
 const fridgeItems = new Set(); /* 「家にある」とチェックされた食材名を記録(定期プラン購入後の「今日買うべきもの」に使用) */
 let isPlanActive = false; /* 定期プランを購読中かどうか。購入で true、解約で false になり、マイページ・タブ遷移の出し分けに使う */
 let planExpiryText = ''; /* 現在の有効期限の表示文字列(「2026/09/01 まで」)。購入・初期化のたびに更新し、マイページのパスカード再描画にも使う */
 
 function getSelectedMoods(){
-  return Array.from(document.querySelectorAll('.chip.on')).map(c => c.dataset.mood);
+  return Array.from(document.querySelectorAll('.chiprow .chip.on')).map(c => c.dataset.mood);
 }
 
 /* ---- 初回設定のNG食材・アレルギーを考慮 ---- */
@@ -800,19 +817,81 @@ function renderDish(dish){
   }
 }
 
-let left = 2;
+/* ---- 今日の状態(日本時間の日付ごと):選んだ料理・引き直し回数・「作った」 ----
+   ログイン中はDB(user_daily / user_history)、未ログインはこの端末(localStorage)に保存する。
+   日付が変わると、引き直し回数と「作った」は自動でリセットされる */
+const DAILY_KEY = 'kg_daily';
+function todayKey(){ return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }); }
+let dailyDay = todayKey();
+let rerollsUsed = 0;
+let madeToday = null; /* 今日「作った」を押した料理ID(押していなければ null) */
 const rerollBtn = document.getElementById('reroll');
+
+function rerollLimit(){ return featureLimit(isPlanActive ? 'premium' : 'free', 'reroll_count', 2); }
+function updateRerollUI(){
+  const remain = Math.max(0, rerollLimit() - rerollsUsed);
+  document.getElementById('rc').textContent = remain > 0 ? ('残り' + remain + '枚') : '本日分終了';
+  rerollBtn.classList.toggle('is-disabled', remain <= 0);
+}
+function readLocalDaily(){
+  try { const d = JSON.parse(localStorage.getItem(DAILY_KEY) || 'null'); return (d && d.day === todayKey()) ? d : null; }
+  catch (e) { return null; }
+}
+async function saveDaily(){
+  if (sb && currentUser) {
+    const { error } = await sb.from('user_daily').upsert({
+      user_id: currentUser.id, day: todayKey(), dish_id: currentDishId,
+      rerolls_used: rerollsUsed, updated_at: new Date().toISOString()
+    });
+    if (error) console.error('daily save failed', error);
+  } else {
+    try { localStorage.setItem(DAILY_KEY, JSON.stringify({ day: todayKey(), dishId: currentDishId, used: rerollsUsed, made: madeToday })); } catch (e) {}
+  }
+}
+/* 日付をまたいでアプリを開きっぱなしにしていた場合のリセット */
+function rolloverIfNewDay(){
+  const t = todayKey();
+  if (t === dailyDay) return;
+  dailyDay = t; rerollsUsed = 0; madeToday = null;
+  updateRerollUI(); updateMadeButtonState(currentDishId);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') rolloverIfNewDay(); });
+
 rerollBtn.addEventListener('click', () => {
-  if (left <= 0) return;
-  left--;
-  document.getElementById('rc').textContent = left > 0 ? ('残り' + left + '枚') : '本日分終了';
+  rolloverIfNewDay();
+  if (rerollsUsed >= rerollLimit()) return;
+  rerollsUsed++;
   pickDish();
   updateIssueTime();
-  if (left <= 0) rerollBtn.classList.add('is-disabled');
+  updateRerollUI();
+  saveDaily();
 });
 
-document.querySelectorAll('.chip').forEach(c=>{
-  c.addEventListener('click',()=>c.classList.toggle('on'));
+/* 未ログインで開いたとき:今日すでに選んでいた料理・回数・「作った」を戻す */
+(function restoreGuestDaily(){
+  const d = readLocalDaily();
+  if (!d) return;
+  const dish = dishes.find(x => x.id === d.dishId);
+  if (dish) renderDish(dish);
+  rerollsUsed = d.used || 0;
+  madeToday = d.made || null;
+  updateRerollUI();
+})();
+
+/* ---- 気分チップ(気分の一覧はDBの moods テーブルで管理) ---- */
+let moodsRendered = false;
+function renderMoodChips(list){
+  const row = document.querySelector('.chiprow');
+  if (!row || !list.length) return;
+  const sel = moodsRendered ? new Set(getSelectedMoods()) : new Set(list.filter(m => m.default_on).map(m => m.id));
+  row.innerHTML = list.map(m =>
+    `<div class="chip${sel.has(m.id) ? ' on' : ''}" data-mood="${escapeHtml(m.id)}"><i class="ti ${escapeHtml(m.icon)}"></i>${escapeHtml(m.label)}</div>`
+  ).join('');
+  moodsRendered = true;
+}
+document.querySelector('.chiprow').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (chip) chip.classList.toggle('on');
 });
 
 /* ---- 「この一枚で決める」→ 今表示中の料理と一致するレシピへ遷移 ---- */
@@ -850,8 +929,8 @@ function renderRecipeDetail(dishId){
 /* ---- 「作った」ボタンの状態を、その料理が記録済みかどうかで切り替える ---- */
 function updateMadeButtonState(dishId){
   const btn = document.getElementById('made-btn');
-  if (madeDishIds.has(dishId)){
-    btn.innerHTML = '<i class="ti ti-check"></i> 記録済み';
+  if (madeToday !== null){
+    btn.innerHTML = '<i class="ti ti-check"></i> ' + (madeToday === dishId ? '記録済み' : '今日は記録済み');
     btn.disabled = true;
   } else {
     btn.innerHTML = '<i class="ti ti-check"></i> 作った';
@@ -925,9 +1004,11 @@ lockbarLink.addEventListener('keydown', (e) => {
 const madeBtn = document.getElementById('made-btn');
 const historyStack = document.getElementById('history-stack');
 madeBtn.addEventListener('click', () => {
-  if (madeDishIds.has(currentDishId)) return; /* 念のための二重防止 */
-  madeDishIds.add(currentDishId);
+  rolloverIfNewDay();
+  if (madeToday !== null) return; /* 「作った」は1日1回まで */
+  madeToday = currentDishId;
   syncHistory(currentDishId);
+  if (!currentUser) saveDaily();
 
   const dishName = document.getElementById('detail-name').textContent;
   const now = new Date();
@@ -1682,6 +1763,7 @@ async function applySession(session){
       if (restored || document.getElementById('auth').classList.contains('active')) switchTab('mypage');
       await loadAccountData(user, restored);
       await loadSubscription(user);
+      updateRerollUI();
       restoreLastScreen();
     }
   } else if (currentUser) {
@@ -1734,7 +1816,7 @@ async function syncFavorite(dishId, on){
 async function syncHistory(dishId){
   if (!sb || !currentUser) return;
   const { error } = await sb.from('user_history').insert({ user_id: currentUser.id, dish_id: dishId });
-  if (error) console.error('history save failed', error);
+  if (error && error.code !== '23505') console.error('history save failed', error); /* 23505 = 今日はすでに記録済み */
 }
 function renderHistoryFromRows(rows){
   const stack = document.getElementById('history-stack');
@@ -1756,11 +1838,13 @@ function renderHistoryFromRows(rows){
 async function loadAccountData(user, restoredFromLogin){
   if (!sb) return;
   try {
-    const [p, st, fv, hs] = await Promise.all([
+    const today = todayKey();
+    const [p, st, fv, hs, dl] = await Promise.all([
       sb.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
       sb.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
       sb.from('user_favorites').select('dish_id').order('created_at'),
-      sb.from('user_history').select('dish_id,made_at').order('made_at', { ascending: false }).limit(50)
+      sb.from('user_history').select('dish_id,made_at,made_date').order('made_at', { ascending: false }).limit(50),
+      sb.from('user_daily').select('dish_id,rerolls_used').eq('day', today).maybeSingle()
     ]);
     /* 名前:ログイン前に入力していた名前があれば優先してDBへ、なければDBの値を使う */
     if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
@@ -1777,6 +1861,20 @@ async function loadAccountData(user, restoredFromLogin){
     renderFavoritesList();
     updateFavButtonState(currentDishId);
     renderHistoryFromRows(hs.data || []);
+    /* 今日の状態:「作った」はDBの履歴、選んだ料理と引き直し回数は user_daily から */
+    dailyDay = today;
+    const madeRow = (hs.data || []).find(r => r.made_date === today);
+    madeToday = madeRow ? madeRow.dish_id : null;
+    if (dl.data) {
+      rerollsUsed = dl.data.rerolls_used || 0;
+      const dish = dishes.find(x => x.id === dl.data.dish_id);
+      if (dish) renderDish(dish);
+    } else {
+      rerollsUsed = 0;
+      saveDaily(); /* 今日の行をまだ持っていなければ、いま表示中の料理で作る */
+    }
+    updateRerollUI();
+    renderRecipeDetail(currentDishId);
     renderProfileHeader();
   } catch (err) {
     console.error('account data load failed', err);
@@ -1801,16 +1899,20 @@ async function loadCatalog(){
       dishes: pub.from('dishes').select('*').order('sort_order'),
       ing: pub.from('recipe_ingredients').select('dish_id,sort_order,name,amount').order('sort_order'),
       steps: pub.from('recipe_steps').select('dish_id,step_no,instruction').order('step_no'),
-      features: pub.from('plan_features').select('tier_code,feature_key,enabled,limit_value')
+      features: pub.from('plan_features').select('tier_code,feature_key,enabled,limit_value'),
+      moods: pub.from('moods').select('id,label,icon,default_on').order('sort_order'),
+      dishMoods: pub.from('dish_moods').select('dish_id,mood_id')
     };
     const names = Object.keys(jobs);
     const res = await Promise.all(names.map(n => jobs[n].then(r => r, e => ({ data: null, error: e }))));
     const out = {};
     names.forEach((n, i) => { out[n] = res[i]; if (res[i].error) console.error('catalog load failed [' + n + ']: ' + describeError(res[i].error)); });
+    const moodsByDish = {};
+    ((out.dishMoods && out.dishMoods.data) || []).forEach(r => { (moodsByDish[r.dish_id] = moodsByDish[r.dish_id] || []).push(r.mood_id); });
     if (out.dishes.data && out.dishes.data.length && out.ing.data && out.steps.data) {
       dishes.splice(0, dishes.length, ...out.dishes.data.map(r => ({
         id: r.id, name: r.name, time: r.cook_time, cost: r.cost_label, serving: r.serving,
-        moods: r.moods || [], stamp: [r.stamp_top, r.stamp_bottom],
+        moods: moodsByDish[r.id] || [], stamp: [r.stamp_top, r.stamp_bottom],
         balance: { staple: r.staple, main: r.main_dish, side: r.side }, kcal: r.kcal
       })));
       Object.keys(recipes).forEach(k => delete recipes[k]);
@@ -1821,6 +1923,8 @@ async function loadCatalog(){
     (out.features.data || []).forEach(r => {
       (planFeatures[r.tier_code] = planFeatures[r.tier_code] || {})[r.feature_key] = r;
     });
+    if (out.moods && out.moods.data && out.moods.data.length) renderMoodChips(out.moods.data);
+    try { updateRerollUI(); } catch (e) {}
     try { renderTodayPreview(); } catch (e) {}
   } catch (err) {
     console.error('catalog load failed (using built-in data): ' + describeError(err), err);
@@ -1828,13 +1932,16 @@ async function loadCatalog(){
 }
 
 loadCatalog();
+function finishBoot(){ document.documentElement.classList.remove('booting'); }
+setTimeout(finishBoot, 6000); /* 万一ログイン確認が終わらなくても画面が出るように */
+if (!sb) finishBoot();
 renderAccountBox();
 if (sb) {
   sb.auth.onAuthStateChange((event, session) => {
     /* コールバック内でawaitするとSupabase側がロックされるため、次のtickで処理する */
     setTimeout(() => applySession(session), 0);
   });
-  sb.auth.getSession().then(({ data }) => applySession(data.session));
+  sb.auth.getSession().then(({ data }) => applySession(data.session)).catch(err => console.error('session load failed', err)).finally(finishBoot);
 }
 showAuthErrorFromUrl();
 </script>
