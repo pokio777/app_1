@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta name="google-site-verification" content="pAjFKTeEnSKsYf1UY3aAy_swatfcNlyQbdIfUgAYiKg" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>今日のご飯</title>
+<title>初回設定 ー 今日のご飯</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
@@ -277,7 +276,6 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
 /* 初回設定ページ:4問に答えると、この端末(未ログイン)とアカウント(ログイン中)に保存して、アプリ(index.html)へ戻る */
 const SUPABASE_URL = 'https://qjptymqefhtxtkmsmmhh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqcHR5bXFlZmh0eHRrbXNtbWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNjM4NjQsImV4cCI6MjEwNjgzOTg2NH0.nmQtIeRDUTLh4vHVFcNfzV8Av1kjcOcHmc1TBz7PR60';
-const LS_KEY = 'kg_onboarding';
 const params = new URLSearchParams(location.search);
 const editMode = params.get('mode') === 'edit';           /* マイページからの再設定 */
 const returnTab = params.get('return') === 'mypage' ? 'mypage' : 'home';
@@ -303,9 +301,9 @@ const obSteps = [
 ];
 let obStep = 0;
 let obAnswers = {};
-try {
-  const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-  if (editMode && d && d.answers) obAnswers = Object.assign({}, d.answers); /* 再設定のときは今の回答から始める */
+try { /* 再設定のときは、このタブで答えた内容から始める(未ログインの回答は端末には保存しない) */
+  const a = JSON.parse(sessionStorage.getItem('kg_ob_answers') || 'null');
+  if (editMode && a) obAnswers = Object.assign({}, a);
 } catch (e) {}
 
 function escapeHtml(str){
@@ -315,26 +313,31 @@ function escapeHtml(str){
 async function complete(){
   const btns = document.querySelectorAll('#ob-body button');
   btns.forEach(b => { b.disabled = true; });
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ done: true, answers: obAnswers }));
-    localStorage.setItem('kg_last_tab', returnTab);
-  } catch (e) {}
-  /* ログイン中なら、アカウントにも保存する */
+  try { localStorage.setItem('kg_ob_seen', '1'); } catch (e) {} /* 「初回設定を見た」印だけを端末に残す */
+  let session = null;
   if (sb) {
+    try { const { data } = await sb.auth.getSession(); session = data && data.session; } catch (e) {}
+  }
+  if (session) {
+    /* ログイン中:回答はアカウントに保存する */
+    try { localStorage.setItem('kg_last_tab', returnTab); } catch (e) {}
     try {
-      const { data } = await sb.auth.getSession();
-      if (data && data.session) {
-        const { error } = await sb.from('user_settings').upsert({
-          user_id: data.session.user.id,
-          cooking_level: obAnswers.level || null,
-          cook_time: obAnswers.time || null,
-          goal: obAnswers.goal || null,
-          ng_foods: obAnswers.ng || null,
-          updated_at: new Date().toISOString()
-        });
-        if (error) console.error('settings save failed', error);
-      }
+      const { error } = await sb.from('user_settings').upsert({
+        user_id: session.user.id,
+        cooking_level: obAnswers.level || null,
+        cook_time: obAnswers.time || null,
+        goal: obAnswers.goal || null,
+        ng_foods: obAnswers.ng || null,
+        updated_at: new Date().toISOString()
+      });
+      if (error) console.error('settings save failed', error);
     } catch (e) { console.error('settings save failed', e); }
+  } else {
+    /* 未ログイン:回答は端末に保存せず、アプリへ渡すためにこのタブの間だけ持つ */
+    try {
+      sessionStorage.setItem('kg_ob_answers', JSON.stringify(obAnswers));
+      sessionStorage.setItem('kg_last_tab', returnTab);
+    } catch (e) {}
   }
   location.replace(APP_URL);
 }
@@ -384,7 +387,7 @@ function renderOnboard(){
     const backBtn = document.getElementById('ob-back');
     if (backBtn) backBtn.addEventListener('click', ()=>{ obStep--; renderOnboard(); });
     const cancelBtn = document.getElementById('ob-cancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', ()=>{ try { localStorage.setItem('kg_last_tab', returnTab); } catch (e) {} location.replace(APP_URL); });
+    if (cancelBtn) cancelBtn.addEventListener('click', ()=>{ try { sessionStorage.setItem('kg_last_tab', returnTab); } catch (e) {} location.replace(APP_URL); });
     const skipBtn = document.getElementById('ob-skip');
     if (skipBtn) skipBtn.addEventListener('click', complete);
 
