@@ -748,9 +748,33 @@ const recipes = {
   }
 };
 /* No.01〜05は写真あり、No.06〜12はアイコン表示(画像納品待ち) */
-/* 料理の写真:DB(dishes.image_url → Supabase Storage)のURLを使う。写真がない料理は、アイコン表示になる */
-function photoCss(dish){
-  return dish.imageUrl ? `url("${dish.imageUrl}")` : '';
+/* 料理の写真:DB(dishes.image_url → Supabase Storage)のURLを使う。
+   ・読み込めたときだけ表示を切り替える(前の料理の写真が残ったままにならない)
+   ・DBのURLが読めなければ、番号から決まる既定のURLを試す。どれも読めなければアイコン表示 */
+function photoUrls(dish){
+  const urls = [dish.imageUrl, IMG_BASE + String(dish.id).padStart(2, '0') + '.jpg'];
+  return urls.filter((u, i) => u && urls.indexOf(u) === i);
+}
+function setDishPhoto(el, dish, onPhoto, onNone){
+  const key = dish.id + ':' + Date.now() + Math.random();
+  el.dataset.photoKey = key; /* 新しい切り替えが来たら、古い読み込みの結果は捨てる */
+  const urls = photoUrls(dish);
+  const next = (i) => {
+    if (el.dataset.photoKey !== key) return;
+    if (i >= urls.length) { onNone(); return; }
+    const img = new Image();
+    const ok = () => { if (el.dataset.photoKey !== key) return; el.style.backgroundImage = `url("${urls[i]}")`; onPhoto(); };
+    img.onload = ok;
+    img.onerror = () => next(i + 1);
+    img.src = urls[i];
+    if (img.complete && img.naturalWidth) ok(); /* すでに読み込み済みなら、すぐ切り替える */
+  };
+  onNone(); /* 読み込み中は、前の写真を消してアイコン表示にする */
+  next(0);
+}
+/* 起動後に、全料理の写真を先に読み込んでおく(引き直したときにすぐ表示するため) */
+function preloadDishPhotos(){
+  setTimeout(() => dishes.forEach(d => { const u = photoUrls(d)[0]; if (u) { const im = new Image(); im.src = u; } }), 1200);
 }
 const IMG_BASE = 'https://qjptymqefhtxtkmsmmhh.supabase.co/storage/v1/object/public/dish-photos/'; /* 料理写真の保存場所(Supabase Storage)。ファイル名は 01.jpg〜 */
 dishes.forEach(d => { d.imageUrl = IMG_BASE + String(d.id).padStart(2, '0') + '.jpg'; }); /* DBから読み込めなかった場合の既定 */
@@ -809,16 +833,10 @@ function renderDish(dish){
     `<span class="tag">${dish.time}</span><span class="tag">${dish.cost}</span><span class="tag">${dish.serving}</span>`;
   document.getElementById('dish-stamp').innerHTML = `${dish.stamp[0]}<br>${dish.stamp[1]}`;
 
-  const photo = photoCss(dish);
-  if (photo){
-    stampboxEl.style.backgroundImage = photo;
-    stampboxEl.classList.add('has-photo');
-    stampboxEl.innerHTML = `<div class="stamp" id="dish-stamp">${dish.stamp[0]}<br>${dish.stamp[1]}</div>`;
-  } else {
-    stampboxEl.style.backgroundImage = 'none';
-    stampboxEl.classList.remove('has-photo');
-    stampboxEl.innerHTML = `<i class="ti ti-tools-kitchen-2"></i><div class="stamp" id="dish-stamp">${dish.stamp[0]}<br>${dish.stamp[1]}</div>`;
-  }
+  const stampHtml = `<div class="stamp" id="dish-stamp">${dish.stamp[0]}<br>${dish.stamp[1]}</div>`;
+  setDishPhoto(stampboxEl, dish,
+    () => { stampboxEl.classList.add('has-photo'); stampboxEl.innerHTML = stampHtml; },
+    () => { stampboxEl.style.backgroundImage = 'none'; stampboxEl.classList.remove('has-photo'); stampboxEl.innerHTML = `<i class="ti ti-tools-kitchen-2"></i>${stampHtml}`; });
   /* 引き直しなどでホームの料理が変わったら、レシピタブも同じ料理に合わせる */
   try { renderRecipeDetail(dish.id); } catch (e) {}
 }
@@ -937,16 +955,9 @@ function renderRecipeDetail(dishId){
     .join('');
 
   const photoEl = document.getElementById('detail-photo');
-  const photo = photoCss(dish);
-  if (photo){
-    photoEl.style.backgroundImage = photo;
-    photoEl.classList.add('has-photo');
-    photoEl.innerHTML = '';
-  } else {
-    photoEl.style.backgroundImage = 'none';
-    photoEl.classList.remove('has-photo');
-    photoEl.innerHTML = '<i class="ti ti-tools-kitchen-2"></i>';
-  }
+  setDishPhoto(photoEl, dish,
+    () => { photoEl.classList.add('has-photo'); photoEl.innerHTML = ''; },
+    () => { photoEl.style.backgroundImage = 'none'; photoEl.classList.remove('has-photo'); photoEl.innerHTML = '<i class="ti ti-tools-kitchen-2"></i>'; });
 
   updateMadeButtonState(dish.id);
   updateFavButtonState(dish.id);
@@ -1951,6 +1962,7 @@ async function loadCatalog(){
     });
     if (out.moods && out.moods.data && out.moods.data.length) renderMoodChips(out.moods.data);
     try { updateRerollUI(); } catch (e) {}
+    try { preloadDishPhotos(); } catch (e) {}
     try { renderTodayPreview(); } catch (e) {}
   } catch (err) {
     console.error('catalog load failed (using built-in data): ' + describeError(err), err);
@@ -1958,7 +1970,7 @@ async function loadCatalog(){
 }
 
 loadCatalog();
-const APP_VERSION = '2026.10.11-j'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
+const APP_VERSION = '2026.10.12-k'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
 document.getElementById('app-version').textContent = 'ver ' + APP_VERSION;
 console.info('今日のご飯 ver ' + APP_VERSION);
 function finishBoot(){ document.documentElement.classList.remove('booting'); }
