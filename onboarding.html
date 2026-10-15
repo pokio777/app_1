@@ -319,8 +319,8 @@ async function complete(){
     try { const { data } = await sb.auth.getSession(); session = data && data.session; } catch (e) {}
   }
   if (session) {
-    /* ログイン中:回答はアカウントに保存する */
-    try { localStorage.setItem('kg_last_tab', returnTab); } catch (e) {}
+    /* ログイン中:回答はアカウントに保存する。戻る画面はこのタブの間だけ持つ */
+    try { sessionStorage.setItem('kg_last_tab', returnTab); } catch (e) {}
     try {
       const { error } = await sb.from('user_settings').upsert({
         user_id: session.user.id,

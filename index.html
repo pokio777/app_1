@@ -29,7 +29,7 @@
     }
     localStorage.removeItem('kg_moods');
     localStorage.removeItem('kg_fridge');
-    if (!has) localStorage.removeItem('kg_last_tab');
+    localStorage.removeItem('kg_last_tab'); /* 旧版の保存。いまは使わない(ログイン中はアカウントに保存) */
     var dl = localStorage.getItem('kg_daily');
     if (dl) {
       try { var x = JSON.parse(dl); localStorage.setItem('kg_daily', JSON.stringify({ day: x.day, used: x.used || 0 })); }
@@ -560,7 +560,7 @@ p.sub{font-size:12px;color:var(--ink-soft);margin:0;}
 
 <script>
 function switchTab(name){
-  if (['home','plan','mypage'].includes(name)) { try { if (currentUser) localStorage.setItem('kg_last_tab', name); } catch (e) {} } /* ログイン中だけ記録 */
+  if (['home','plan','mypage'].includes(name)) saveLastTab(name); /* ログイン中だけ、アカウントに記録 */
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.t===name));
 
   if (name === 'plan') {
@@ -1758,7 +1758,7 @@ function restoreLastScreen(){
     try {
       const handoff = sessionStorage.getItem('kg_last_tab'); /* 初回設定ページから戻ったときだけ使う(1回で消す) */
       sessionStorage.removeItem('kg_last_tab');
-      t = handoff || (currentUser ? localStorage.getItem('kg_last_tab') : '') || 'home';
+      t = handoff || (currentUser ? savedLastTab : '') || 'home';
     } catch (e) {}
   }
   if (!['home', 'plan', 'mypage'].includes(t)) t = 'home';
@@ -1787,7 +1787,7 @@ async function applySession(session){
     }
   } else if (currentUser) {
     /* ログアウト:個人データが端末に残らないよう、最初の状態に戻す */
-    try { ['kg_last_tab'].forEach(k => localStorage.removeItem(k)); sessionStorage.removeItem('kg_ob_answers'); /* 引き直し回数と「初回設定を見た」印は残す */ } catch (e) {}
+    try { sessionStorage.removeItem('kg_ob_answers'); /* 引き直し回数と「初回設定を見た」印は残す */ } catch (e) {}
     location.reload();
     return;
   }
@@ -1812,6 +1812,17 @@ async function saveProfileName(name){
   if (!sb || !currentUser) return;
   const { error } = await sb.from('profiles').update({ display_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
   if (error) console.error('profile save failed', error);
+}
+let savedLastTab = ''; /* アカウントに保存されている「最後に開いた画面」 */
+let lastTabTimer = null;
+function saveLastTab(name){
+  try { if (!sb || !currentUser) return; } catch (e) { return; }
+  savedLastTab = name;
+  clearTimeout(lastTabTimer);
+  lastTabTimer = setTimeout(async () => { /* 切り替えが続いても、最後の1回だけ送る */
+    const { error } = await sb.from('profiles').update({ last_tab: name }).eq('id', currentUser.id);
+    if (error) console.error('last tab save failed', error);
+  }, 300);
 }
 async function saveSettings(){
   if (!sb || !currentUser) return;
@@ -1869,7 +1880,7 @@ async function loadAccountData(user, restoredFromLogin){
   try {
     const today = todayKey();
     const [p, st, fv, hs, dl, fr] = await Promise.all([
-      sb.from('profiles').select('display_name,selected_moods').eq('id', user.id).maybeSingle(),
+      sb.from('profiles').select('display_name,selected_moods,last_tab').eq('id', user.id).maybeSingle(),
       sb.from('user_settings').select('*').eq('user_id', user.id).maybeSingle(),
       sb.from('user_favorites').select('dish_id').order('created_at'),
       sb.from('user_history').select('dish_id,made_at,made_date').order('made_at', { ascending: false }).limit(50),
@@ -1879,6 +1890,7 @@ async function loadAccountData(user, restoredFromLogin){
     /* 名前:ログイン前に入力していた名前があれば優先してDBへ、なければDBの値を使う */
     if (p.data && p.data.display_name && !(restoredFromLogin && userName)) userName = p.data.display_name;
     else if (userName) saveProfileName(userName);
+    savedLastTab = (p.data && p.data.last_tab) || '';
     /* 気分の選択:アカウントに保存があればそれを復元、なければ今の選択を保存 */
     if (p.data && Array.isArray(p.data.selected_moods)) { selectedMoods = p.data.selected_moods; applyMoodSelection(); }
     else { selectedMoods = getSelectedMoods(); saveMoods(); }
@@ -1980,7 +1992,7 @@ async function loadCatalog(){
 }
 
 loadCatalog();
-const APP_VERSION = '2026.10.15-l'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
+const APP_VERSION = '2026.10.15-m'; /* 画面の一番下に表示。古いファイルが読み込まれていないかの確認用 */
 document.getElementById('app-version').textContent = 'ver ' + APP_VERSION;
 console.info('今日のご飯 ver ' + APP_VERSION);
 function finishBoot(){ document.documentElement.classList.remove('booting'); }
